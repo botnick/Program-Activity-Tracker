@@ -25,18 +25,60 @@ echo  Admin: YES  (ETW capture enabled)
 echo ============================================================
 echo.
 
-REM --- check Python (try python, then py.exe launcher) ----------------------
+REM --- locate Python ---------------------------------------------------------
+REM UAC-elevated shells often lose user PATH, so search known install
+REM locations after PATH lookup fails.
 set PYTHON=
 where python >nul 2>&1 && set PYTHON=python
 if not defined PYTHON (
-    where py >nul 2>&1 && set PYTHON=py -3
+    where py >nul 2>&1 && set "PYTHON=py -3"
 )
 if not defined PYTHON (
-    echo [ERROR] Python 3.10+ not found.
-    echo         Install from https://www.python.org/downloads/  (tick "Add to PATH")
-    echo         or from the Microsoft Store.
+    REM Search per-user installs (Python.org default for "Install for me")
+    for %%V in (313 312 311 310) do (
+        if not defined PYTHON (
+            if exist "%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe" (
+                set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe"
+            )
+        )
+    )
+)
+if not defined PYTHON (
+    REM Search system-wide installs
+    for %%V in (313 312 311 310) do (
+        if not defined PYTHON (
+            if exist "%ProgramFiles%\Python%%V\python.exe" set "PYTHON=%ProgramFiles%\Python%%V\python.exe"
+            if exist "%ProgramFiles(x86)%\Python%%V\python.exe" set "PYTHON=%ProgramFiles(x86)%\Python%%V\python.exe"
+        )
+    )
+)
+if not defined PYTHON (
+    REM Try py launcher at the standard Windows install path
+    if exist "%SystemRoot%\py.exe" set "PYTHON=%SystemRoot%\py.exe -3"
+)
+if not defined PYTHON (
+    echo [ERROR] Python 3.10+ not found in PATH or known install locations.
+    echo.
+    echo         Searched:
+    echo           - PATH ^(where python / where py^)
+    echo           - %LOCALAPPDATA%\Programs\Python\Python310-313
+    echo           - %ProgramFiles%\Python310-313
+    echo           - %SystemRoot%\py.exe
+    echo.
+    echo         Install Python 3.10+ from https://www.python.org/downloads/
+    echo         and tick "Add Python to PATH" during install.
+    echo.
     pause
     exit /b 1
+)
+
+echo [INFO] Using Python: %PYTHON%
+
+REM Quote the path if it contains spaces and isn't already quoted.
+echo %PYTHON% | findstr /c:"\"" >nul
+if %errorlevel% neq 0 (
+    echo %PYTHON% | findstr /c:" " >nul
+    if %errorlevel% equ 0 set "PYTHON=\"%PYTHON%\""
 )
 
 REM --- ensure backend deps installed -----------------------------------------
@@ -58,15 +100,15 @@ set BIN2=service\native\build\Release\tracker_capture.exe
 if not exist "%BIN1%" if not exist "%BIN2%" (
     echo [INFO] Native ETW binary missing; building via Visual Studio Developer env...
     set VSDEVCMD=
-    set VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe
+    set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
     if exist "!VSWHERE!" (
-        for /f "usebackq tokens=*" %%i in (`"!VSWHERE!" -latest -property installationPath`) do set VSDEVCMD=%%i\Common7\Tools\VsDevCmd.bat
+        for /f "usebackq tokens=*" %%i in (`"!VSWHERE!" -latest -property installationPath`) do set "VSDEVCMD=%%i\Common7\Tools\VsDevCmd.bat"
     )
     if not defined VSDEVCMD (
         echo [WARN] Visual Studio not detected. Native ETW capture will not work.
         echo        Install Visual Studio 2022+ with C++ workload, then re-run this script.
     ) else (
-        cmd /c ""!VSDEVCMD!" -arch=amd64 && cmake -S service\native -B service\native\build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build service\native\build --config Release"
+        cmd /c ""!VSDEVCMD!" -arch=amd64 ^&^& cmake -S service\native -B service\native\build -G Ninja -DCMAKE_BUILD_TYPE=Release ^&^& cmake --build service\native\build --config Release"
         if not exist "%BIN1%" if not exist "%BIN2%" (
             echo [ERROR] Native build failed. ETW capture will not work.
             echo         Run scripts\setup-defender-exclusion.ps1 first if Defender is blocking output.
