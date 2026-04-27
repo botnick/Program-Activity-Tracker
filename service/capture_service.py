@@ -26,6 +26,7 @@ import socket
 import struct
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -33,6 +34,8 @@ from typing import Any
 
 import psutil
 from etw import ETW, GUID, ProviderInfo
+
+from service.etw_cleanup import sweep_orphan_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -161,10 +164,24 @@ def _build_dos_device_map() -> list[tuple[str, str]]:
     return mapping
 
 
+_UNC_PREFIXES: tuple[str, ...] = (
+    r"\device\mup",
+    r"\device\lanmanredirector",
+)
+
+
 def _translate_nt_path(path: str | None, dos_map: list[tuple[str, str]]) -> str | None:
     if not path:
         return path
     lowered = path.lower()
+    # UNC: \Device\Mup\server\share\... -> \\server\share\...
+    for unc_prefix in _UNC_PREFIXES:
+        if lowered.startswith(unc_prefix):
+            remainder = path[len(unc_prefix):]
+            # remainder typically starts with "\"; collapse to a single leading "\"
+            if remainder.startswith("\\"):
+                return "\\" + remainder  # produces "\\server\share\..."
+            return "\\\\" + remainder
     for nt_prefix, dos_letter in dos_map:
         if lowered.startswith(nt_prefix):
             return dos_letter + path[len(nt_prefix):]
@@ -184,6 +201,7 @@ def _to_int(value: Any) -> int | None:
 class CaptureTarget:
     exe_path: str
     pid: int
+    pid_create_time: float | None = None
 
 
 class CaptureService:
@@ -204,10 +222,26 @@ class CaptureService:
         self._tracked_pids: set[int] = {target.pid}
         self._lock = threading.Lock()
         self._dos_map = _build_dos_device_map()
-        self._file_object_paths: dict[int, str] = {}
+        # Lazy-import to avoid pulling pydantic into unrelated tests; the
+        # backend always has it installed.
+        try:
+            from backend.app.config import get_settings
+
+            self._file_object_cache_cap: int = int(get_settings().file_object_cache_size)
+        except Exception:  # noqa: BLE001
+            self._file_object_cache_cap = 100_000
+        self._file_object_paths: OrderedDict[int, str] = OrderedDict()
         self._file_paths_lock = threading.Lock()
+        self._pid_create_times: dict[int, float] = {}
+        self._pid_create_lock = threading.Lock()
         self._session_name = f"ActivityTracker-{target.pid}-{int(time.time())}"
         self._stopped = False
+        # Error sample-rate state.
+        self._last_error_log: float = 0.0
+        self._error_count: int = 0
+        # Backpressure / observability.
+        self._dropped_events: int = 0
+        self._last_event_at: str | None = None
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -216,6 +250,15 @@ class CaptureService:
             raise PermissionError(
                 "ETW capture requires Administrator. Restart the backend in an elevated shell."
             )
+
+        # Reap any ETW sessions left behind by a crashed prior run before we
+        # try to create a brand-new one with the same prefix.
+        try:
+            stopped = sweep_orphan_sessions()
+            if stopped:
+                logger.info("swept %d orphan ETW session(s): %s", len(stopped), stopped)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("orphan ETW sweep failed: %s", exc)
 
         self._seed_descendants_from_psutil()
 
@@ -306,6 +349,14 @@ class CaptureService:
 
             if kind == "process":
                 self._update_pid_set(event_id, data)
+                # If the target itself stopped, drop its cached create_time so
+                # a future PID with the same value isn't cross-validated against
+                # stale data.
+                if event_id == 2:  # ProcessStop
+                    stop_pid = _to_int(data.get("ProcessID")) or _to_int(data.get("ProcessId"))
+                    if stop_pid is not None:
+                        with self._pid_create_lock:
+                            self._pid_create_times.pop(stop_pid, None)
 
             # PID gate. Process events are also gated so we only emit
             # process-tree changes that involve the target tree.
@@ -318,6 +369,16 @@ class CaptureService:
             if not self._is_tracked(relevant_pid):
                 return
 
+            # PID-reuse protection: only relevant when the event is *for the
+            # target itself*. Descendants are validated transitively via the
+            # ProcessStart pid-set mutation.
+            if (
+                self.target.pid_create_time is not None
+                and relevant_pid == self.target.pid
+                and not self._verify_pid_identity(self.target.pid)
+            ):
+                return
+
             if kind == "file":
                 self._track_file_object(event_id, data)
 
@@ -325,7 +386,46 @@ class CaptureService:
             if normalized is not None:
                 self.on_event(normalized)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("event handler error: %s", exc, exc_info=True)
+            self._error_count += 1
+            now = time.monotonic()
+            if now - self._last_error_log >= 5.0:
+                self._last_error_log = now
+                logger.warning("event handler error: %s", exc, exc_info=True)
+
+    def _verify_pid_identity(self, pid: int) -> bool:
+        """Return True iff the live process at ``pid`` matches our captured
+        create_time within 1.0s. Unknown / inaccessible processes are accepted.
+        """
+        expected = self.target.pid_create_time
+        if expected is None:
+            return True
+        with self._pid_create_lock:
+            cached = self._pid_create_times.get(pid)
+        if cached is None:
+            try:
+                cached = float(psutil.Process(pid).create_time())
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                return True  # unknown — accept
+            except Exception:  # noqa: BLE001
+                return True
+            with self._pid_create_lock:
+                self._pid_create_times[pid] = cached
+        return abs(cached - expected) <= 1.0
+
+    def note_dropped(self, n: int = 1) -> None:
+        """Record events dropped by a downstream queue (backpressure)."""
+        self._dropped_events += n
+
+    def stats(self) -> dict[str, Any]:
+        return {
+            "session_name": self._session_name,
+            "target_pid": self.target.pid,
+            "tracked_pids": len(self._tracked_pids),
+            "file_object_cache_size": len(self._file_object_paths),
+            "errors": self._error_count,
+            "dropped": self._dropped_events,
+            "last_event_at": self._last_event_at,
+        }
 
     def _update_pid_set(self, event_id: int, data: dict[str, Any]) -> None:
         if event_id != 1:  # ProcessStart
@@ -339,7 +439,7 @@ class CaptureService:
                 self._tracked_pids.add(new_pid)
 
     def _track_file_object(self, event_id: int, data: dict[str, Any]) -> None:
-        """Maintain a FileObject -> path map so Read/Write events resolve to filenames."""
+        """Maintain a bounded FileObject -> path LRU so Read/Write events resolve to filenames."""
         file_object = _to_int(data.get("FileObject") or data.get("FileKey"))
         file_name = data.get("FileName") or data.get("OpenPath") or data.get("FilePath")
 
@@ -347,7 +447,12 @@ class CaptureService:
         if event_id == 12 and file_object is not None and isinstance(file_name, str) and file_name:
             translated = _translate_nt_path(file_name, self._dos_map)
             with self._file_paths_lock:
-                self._file_object_paths[file_object] = translated or file_name
+                cache = self._file_object_paths
+                cache[file_object] = translated or file_name
+                cache.move_to_end(file_object)
+                cap = max(1, int(self._file_object_cache_cap))
+                while len(cache) > cap:
+                    cache.popitem(last=False)
 
         # Close: drop it.
         if event_id == 14 and file_object is not None:
@@ -363,7 +468,10 @@ class CaptureService:
         if file_object is None:
             return None
         with self._file_paths_lock:
-            return self._file_object_paths.get(file_object)
+            cached = self._file_object_paths.get(file_object)
+            if cached is not None:
+                self._file_object_paths.move_to_end(file_object)
+            return cached
 
     # ---- normalization ---------------------------------------------------
 
@@ -376,6 +484,7 @@ class CaptureService:
         header: dict[str, Any],
     ) -> dict[str, Any] | None:
         timestamp = self._format_timestamp(header.get("TimeStamp"))
+        self._last_event_at = timestamp
 
         if kind == "file":
             return {

@@ -12,7 +12,10 @@ here because they are tightly coupled to the request/response cycle.
 from __future__ import annotations
 
 import asyncio
+import csv as _csv
+import io as _io
 import json
+import json as _json
 import logging
 import uuid
 from dataclasses import asdict
@@ -21,8 +24,8 @@ from pathlib import Path
 from typing import Any
 
 import psutil
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, StreamingResponse
 
 from service.capture_service import CaptureService, CaptureTarget, is_admin
 
@@ -169,17 +172,32 @@ async def create_session(request: ProcessSelectRequest) -> SessionResponse:
         session["capture"] = "needs_admin"
         session["status"] = "needs_admin"
         session["capture_error"] = str(exc)
+        store.mark_session_status(
+            session_id,
+            status="needs_admin",
+            capture="needs_admin",
+            capture_error=str(exc),
+        )
         return SessionResponse(**session)
     except Exception as exc:  # noqa: BLE001
         logger.exception("failed to start capture")
         session["capture"] = "failed"
         session["status"] = "failed"
         session["capture_error"] = f"{type(exc).__name__}: {exc}"
+        store.mark_session_status(
+            session_id,
+            status="failed",
+            capture="failed",
+            capture_error=f"{type(exc).__name__}: {exc}",
+        )
         return SessionResponse(**session)
 
     store.attach_capture(session_id, service)
     session["capture"] = "live"
     session["status"] = "tracking"
+    store.mark_session_status(
+        session_id, status="tracking", capture="live", capture_error=None
+    )
     return SessionResponse(**session)
 
 
@@ -194,6 +212,9 @@ def stop_session(session_id: str) -> dict[str, str]:
     if session is not None:
         session["status"] = "stopped"
         session["capture"] = "stopped"
+        store.mark_session_status(
+            session_id, status="stopped", capture="stopped", capture_error=None
+        )
     return {"status": "stopped"}
 
 
@@ -203,10 +224,73 @@ def list_sessions() -> dict[str, list[dict[str, Any]]]:
 
 
 @router.get("/api/sessions/{session_id}/events")
-def get_events(session_id: str) -> dict[str, list[dict[str, Any]]]:
+def get_events(
+    session_id: str,
+    kind: str | None = Query(None),
+    pid: int | None = Query(None),
+    since: str | None = Query(None),
+    until: str | None = Query(None),
+    q: str | None = Query(None),
+    limit: int = Query(1000, ge=1, le=10000),
+    offset: int = Query(0, ge=0),
+) -> dict[str, list[dict[str, Any]]]:
     if store.get(session_id) is None:
         raise HTTPException(status_code=404, detail="session not found")
-    return {"items": [asdict(event) for event in store.events(session_id)]}
+    return {
+        "items": store.query_events(
+            session_id, kind=kind, pid=pid, since=since, until=until, q=q,
+            limit=limit, offset=offset,
+        )
+    }
+
+
+@router.get("/api/sessions/{session_id}/export")
+def export_events(
+    session_id: str,
+    format: str = Query("jsonl", pattern="^(csv|jsonl)$"),
+    kind: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    q: str | None = None,
+):
+    if store.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    if format == "jsonl":
+        def gen():
+            for row in store.iter_events(session_id, kind=kind, since=since, until=until, q=q):
+                yield (_json.dumps(row, default=str) + "\n").encode()
+        media = "application/x-jsonlines"
+    else:
+        cols = [
+            "id", "session_id", "ts", "kind", "pid", "ppid",
+            "path", "target", "operation", "details",
+        ]
+
+        def gen():
+            buf = _io.StringIO()
+            w = _csv.writer(buf)
+            w.writerow(cols)
+            yield buf.getvalue().encode()
+            buf.seek(0)
+            buf.truncate()
+            for row in store.iter_events(session_id, kind=kind, since=since, until=until, q=q):
+                details = row.get("details")
+                w.writerow([
+                    row.get(c) if c != "details" else _json.dumps(details, default=str)
+                    for c in cols
+                ])
+                yield buf.getvalue().encode()
+                buf.seek(0)
+                buf.truncate()
+        media = "text/csv"
+
+    fname = f"tracker-{session_id}.{format}"
+    return StreamingResponse(
+        gen(),
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @router.post("/api/sessions/{session_id}/emit")
