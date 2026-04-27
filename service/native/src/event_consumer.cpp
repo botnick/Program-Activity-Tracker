@@ -215,6 +215,22 @@ bool EventConsumer::Start(const std::wstring& session_name) {
         }
         stats_worker_ = std::thread([this]() { StatsLoop(); });
     }
+
+    // Seed the FileObject->path cache from handles the target already had
+    // open before tracing began. ETW only carries FileName on the Create
+    // event (id 12); without this seed, Read/Write/Close on pre-existing
+    // handles would resolve to "[handle 0x...]" because we never observed
+    // their Create. Best-effort: failure (and an empty result) are fine,
+    // and only meaningful when the file engine is enabled.
+    if (cfg_.engine_file && cfg_.target_pid != 0) {
+        auto entries = EnumerateOpenFiles(cfg_.target_pid);
+        std::fprintf(stderr,
+                     "[info] seeded FileObject cache with %zu existing "
+                     "handle(s)\n",
+                     entries.size());
+        std::fflush(stderr);
+        SeedFileObjectCache(entries);
+    }
     return true;
 }
 
@@ -239,6 +255,31 @@ void EventConsumer::Stop() {
 size_t EventConsumer::FileCacheSize() const {
     std::lock_guard<std::mutex> lock(file_cache_mu_);
     return file_paths_.size();
+}
+
+void EventConsumer::SeedFileObjectCache(
+    const std::vector<OpenFileEntry>& entries) {
+    std::lock_guard<std::mutex> lock(file_cache_mu_);
+    for (const auto& e : entries) {
+        if (e.file_object == 0) continue;
+        // Skip entries we've already seen (e.g. an early CreateFile that
+        // arrived before the seed completed) so we don't overwrite fresher
+        // data with the snapshot's view.
+        if (file_lru_pos_.count(e.file_object)) continue;
+        std::wstring path = translator_.Translate(e.nt_path);
+        if (path.empty()) continue;
+        file_lru_.push_front(e.file_object);
+        file_lru_pos_[e.file_object] = file_lru_.begin();
+        file_paths_[e.file_object] = std::move(path);
+        // Trim to the configured cap so a pathological process with hundreds
+        // of thousands of open files can't blow past kFileCacheCap.
+        while (file_lru_.size() > kFileCacheCap) {
+            uint64_t evict = file_lru_.back();
+            file_lru_.pop_back();
+            file_lru_pos_.erase(evict);
+            file_paths_.erase(evict);
+        }
+    }
 }
 
 void EventConsumer::StatsLoop() {

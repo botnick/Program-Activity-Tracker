@@ -14,7 +14,9 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
+#include "handle_enumerator.hpp"
 #include "path_translator.hpp"
 #include "pid_filter.hpp"
 
@@ -66,6 +68,13 @@ public:
     // Closes the trace handle (if ProcessTrace already returned, this is a
     // no-op) and joins the worker (and the stats thread, if started).
     void Stop();
+
+    // Pre-populate the FileObject->path cache from currently-open handles
+    // (typically obtained via tracker::EnumerateOpenFiles before tracing
+    // starts). Best-effort: each entry's NT path is run through the same
+    // PathTranslator used by ETW events, and entries already present in the
+    // cache are skipped so we don't clobber fresher data.
+    void SeedFileObjectCache(const std::vector<OpenFileEntry>& entries);
 
     // Counters surfaced to the heartbeat / stats sentinel.
     uint64_t Errors() const { return errors_.load(std::memory_order_relaxed); }

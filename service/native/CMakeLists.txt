@@ -17,6 +17,7 @@ add_executable(tracker_capture
     src/tdh_parser.cpp
     src/path_translator.cpp
     src/list_processes.cpp
+    src/handle_enumerator.cpp
 )
 
 target_link_libraries(tracker_capture PRIVATE
@@ -26,6 +27,7 @@ target_link_libraries(tracker_capture PRIVATE
     ole32
     rpcrt4
     psapi
+    ntdll
 )
 
 target_include_directories(tracker_capture PRIVATE src)
