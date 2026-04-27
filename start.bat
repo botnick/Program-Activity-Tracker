@@ -6,140 +6,163 @@ REM  Double-click to start. Requests UAC elevation automatically.
 REM ============================================================
 
 REM --- self-elevate to admin if not already ----------------------------------
-REM We launch the elevated copy via `cmd /k <script>` so that the window
-REM stays open even if the script exits early (failed dep install, port
-REM already bound, etc). Without /k the window would close instantly,
-REM hiding the error message.
 fltmc >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [INFO] Requesting Administrator elevation...
-    powershell -ExecutionPolicy Bypass -Command "Start-Process cmd.exe -ArgumentList '/k','\"%~f0\"' -Verb RunAs"
-    exit /b
-)
+if %errorlevel% neq 0 goto :request_elevation
 
 cd /d "%~dp0"
 chcp 65001 >nul
-
-REM Show diagnostics so any failure is visible before pause.
-echo [DEBUG] cwd=%CD%
-echo [DEBUG] LOCALAPPDATA=%LOCALAPPDATA%
-echo [DEBUG] SystemRoot=%SystemRoot%
 
 echo.
 echo ============================================================
 echo  Activity Tracker
 echo  Repo:  %CD%
-echo  Admin: YES  (ETW capture enabled)
+echo  Admin: YES  ETW capture enabled
 echo ============================================================
 echo.
+echo [DEBUG] cwd=%CD%
+echo [DEBUG] LOCALAPPDATA=%LOCALAPPDATA%
+echo [DEBUG] SystemRoot=%SystemRoot%
+echo.
 
-REM --- locate Python ---------------------------------------------------------
-REM UAC-elevated shells often lose user PATH, so we search known install
-REM locations after PATH lookup fails. Prefer the system-wide py launcher.
+REM Hoist all %ProgramFiles(x86)%-style references OUTSIDE of any if-block
+REM so the parens in (x86) don't confuse the CMD parser.
+set "PF86=%ProgramFiles(x86)%"
+set "PF=%ProgramFiles%"
 
+goto :find_python
+
+
+:request_elevation
+echo [INFO] Requesting Administrator elevation...
+powershell -ExecutionPolicy Bypass -Command "Start-Process cmd.exe -ArgumentList '/k','\"%~f0\"' -Verb RunAs"
+exit /b
+
+
+REM ============================================================
+REM  Locate Python
+REM ============================================================
+:find_python
 set PYTHON=
 where python >nul 2>&1 && set PYTHON=python
-if not defined PYTHON if exist "%SystemRoot%\py.exe" set PYTHON=py -3
-if not defined PYTHON if exist "%LOCALAPPDATA%\Programs\Python\Python313\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
-if not defined PYTHON if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
-if not defined PYTHON if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
-if not defined PYTHON if exist "%LOCALAPPDATA%\Programs\Python\Python310\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
-if not defined PYTHON if exist "%ProgramFiles%\Python313\python.exe" set "PYTHON=%ProgramFiles%\Python313\python.exe"
-if not defined PYTHON if exist "%ProgramFiles%\Python312\python.exe" set "PYTHON=%ProgramFiles%\Python312\python.exe"
-if not defined PYTHON if exist "%ProgramFiles%\Python311\python.exe" set "PYTHON=%ProgramFiles%\Python311\python.exe"
-if not defined PYTHON if exist "%ProgramFiles%\Python310\python.exe" set "PYTHON=%ProgramFiles%\Python310\python.exe"
+if defined PYTHON goto :python_found
 
-if not defined PYTHON (
-    echo [ERROR] Python 3.10+ not found.
-    echo.
-    echo         Searched: PATH, %%SystemRoot%%\py.exe, and Python310-313 in:
-    echo           %LOCALAPPDATA%\Programs\Python\
-    echo           %ProgramFiles%\
-    echo.
-    echo         Install Python 3.10+ from https://www.python.org/downloads/
-    echo         and tick "Add Python to PATH" during install.
-    pause
-    exit /b 1
-)
+if exist "%SystemRoot%\py.exe" set "PYTHON=py -3"
+if defined PYTHON goto :python_found
 
+if exist "%LOCALAPPDATA%\Programs\Python\Python313\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
+if defined PYTHON goto :python_found
+if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+if defined PYTHON goto :python_found
+if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+if defined PYTHON goto :python_found
+if exist "%LOCALAPPDATA%\Programs\Python\Python310\python.exe" set "PYTHON=%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
+if defined PYTHON goto :python_found
+
+if exist "%PF%\Python313\python.exe" set "PYTHON=%PF%\Python313\python.exe"
+if defined PYTHON goto :python_found
+if exist "%PF%\Python312\python.exe" set "PYTHON=%PF%\Python312\python.exe"
+if defined PYTHON goto :python_found
+if exist "%PF%\Python311\python.exe" set "PYTHON=%PF%\Python311\python.exe"
+if defined PYTHON goto :python_found
+if exist "%PF%\Python310\python.exe" set "PYTHON=%PF%\Python310\python.exe"
+if defined PYTHON goto :python_found
+
+echo [ERROR] Python 3.10+ not found in PATH or known install locations.
+echo         Install Python 3.10+ from https://www.python.org/downloads/
+echo         and tick "Add Python to PATH" during install.
+pause
+exit /b 1
+
+
+:python_found
 echo [INFO] Using Python: %PYTHON%
 
-REM Wrap in quotes if the resolved path has spaces (e.g. Program Files).
-echo %PYTHON% | findstr /c:" " >nul
-if %errorlevel% equ 0 (
-    echo %PYTHON% | findstr /b /c:^" >nul
-    if errorlevel 1 set PYTHON="%PYTHON%"
-)
-
-REM --- ensure backend deps installed -----------------------------------------
+REM ============================================================
+REM  Backend deps
+REM ============================================================
 echo [INFO] Checking backend dependencies...
 %PYTHON% -c "import fastapi, psutil, pydantic_settings" >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [INFO] Installing backend dependencies ^(one-time^)...
-    %PYTHON% -m pip install --upgrade pip
-    %PYTHON% -m pip install -e ".[dev]"
-    if %errorlevel% neq 0 (
-        echo [ERROR] pip install failed.
-        pause
-        exit /b 1
-    )
-)
+if %errorlevel% equ 0 goto :deps_ok
 
-REM --- build native ETW binary if missing ------------------------------------
+echo [INFO] Installing backend dependencies, one-time setup...
+%PYTHON% -m pip install --upgrade pip
+if errorlevel 1 goto :pip_failed
+%PYTHON% -m pip install -e ".[dev]"
+if errorlevel 1 goto :pip_failed
+goto :deps_ok
+
+:pip_failed
+echo [ERROR] pip install failed.
+pause
+exit /b 1
+
+
+:deps_ok
+REM ============================================================
+REM  Native ETW binary
+REM ============================================================
 set BIN1=service\native\build\tracker_capture.exe
 set BIN2=service\native\build\Release\tracker_capture.exe
-if not exist "%BIN1%" if not exist "%BIN2%" (
-    echo [INFO] Native ETW binary missing; building via Visual Studio...
-    set VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe
-    set VSDEVCMD=
-    if exist "%VSWHERE%" (
-        for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -property installationPath`) do set VSDEVCMD=%%i\Common7\Tools\VsDevCmd.bat
-    )
-    if not defined VSDEVCMD (
-        echo [WARN] Visual Studio not detected. Native ETW capture will not work.
-        echo        Install Visual Studio 2022+ with C++ workload, then re-run this script.
-    ) else (
-        echo [INFO] Found VsDevCmd at: %VSDEVCMD%
-        cmd /c ""%VSDEVCMD%" -arch=amd64 && cmake -S service\native -B service\native\build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build service\native\build --config Release"
-        if not exist "%BIN1%" if not exist "%BIN2%" (
-            echo [WARN] Native build did not produce an exe. ETW capture will not work.
-            echo        Run scripts\setup-defender-exclusion.ps1 if Defender is blocking.
-        )
-    )
-) else (
-    echo [INFO] Native ETW binary OK.
-)
+if exist "%BIN1%" goto :native_ok
+if exist "%BIN2%" goto :native_ok
 
-REM --- build the UI if dist is missing ---------------------------------------
-if not exist "ui\dist\index.html" (
-    where npm >nul 2>&1
-    if %errorlevel% neq 0 (
-        echo [WARN] npm not on PATH; UI will not be served. Install Node.js 20+.
-    ) else (
-        echo [INFO] Building UI ^(one-time^)...
-        pushd ui
-        if not exist node_modules (
-            call npm install
-        )
-        call npm run build
-        popd
-    )
-) else (
-    echo [INFO] UI dist OK.
-)
+echo [INFO] Native ETW binary missing; locating Visual Studio...
+set "VSWHERE=%PF86%\Microsoft Visual Studio\Installer\vswhere.exe"
+set "VSDEVCMD="
+if not exist "%VSWHERE%" goto :no_vs
+for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -property installationPath`) do set "VSDEVCMD=%%i\Common7\Tools\VsDevCmd.bat"
+if not defined VSDEVCMD goto :no_vs
 
-REM --- check port 8000 is free -----------------------------------------------
+echo [INFO] Found VsDevCmd: %VSDEVCMD%
+echo [INFO] Building native binary, this takes ~10-20 seconds...
+cmd /c ""%VSDEVCMD%" -arch=amd64 && cmake -S service\native -B service\native\build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build service\native\build --config Release"
+if exist "%BIN1%" goto :native_ok
+if exist "%BIN2%" goto :native_ok
+echo [WARN] Native build did not produce an exe. ETW capture will not work.
+echo        Run scripts\setup-defender-exclusion.ps1 if Defender is blocking.
+goto :ui_check
+
+:no_vs
+echo [WARN] Visual Studio not detected. Native ETW capture will not work.
+echo        Install Visual Studio 2022+ with the C++ workload, then re-run.
+goto :ui_check
+
+
+:native_ok
+echo [INFO] Native ETW binary OK.
+
+
+:ui_check
+REM ============================================================
+REM  UI build
+REM ============================================================
+if exist "ui\dist\index.html" goto :ui_ok
+where npm >nul 2>&1
+if errorlevel 1 goto :no_npm
+echo [INFO] Building UI, one-time setup...
+pushd ui
+if not exist node_modules call npm install
+call npm run build
+popd
+goto :ui_ok
+
+:no_npm
+echo [WARN] npm not on PATH; UI will not be served. Install Node.js 20+.
+
+
+:ui_ok
+REM ============================================================
+REM  Port check
+REM ============================================================
 netstat -ano | findstr ":8000 .*LISTENING" >nul 2>&1
-if %errorlevel% equ 0 (
-    echo.
-    echo [ERROR] Port 8000 is already in use. Run stop.bat first, or set
-    echo         a different port:  set TRACKER_PORT=8001 ^&^& start.bat
-    echo.
-    pause
-    exit /b 1
-)
+if %errorlevel% neq 0 goto :start_backend
+echo.
+echo [ERROR] Port 8000 is already in use. Run stop.bat first.
+pause
+exit /b 1
 
-REM --- open the browser tab in 3 seconds (after backend has time to bind) ----
+
+:start_backend
 start "" /b cmd /c "timeout /t 3 /nobreak >nul && start http://127.0.0.1:8000"
 
 echo.
