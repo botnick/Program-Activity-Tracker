@@ -17,7 +17,6 @@ and right-click → Properties → Details displays the version metadata.
 | `tracker.svg`              | vector                    | source of truth                |
 | `tracker.ico`              | 16, 32, 48, 64, 128, 256  | embedded into the .exe         |
 | `../../../ui/public/favicon.ico` | 16, 32, 48          | served by Vite at site root    |
-| `tracker_preview_256.png`  | 256                       | reviewable preview rendering   |
 | `tracker_capture.rc`       | n/a                       | resource script (icon + verinfo) |
 | `regenerate_icons.py`      | n/a                       | rebuild script (Pillow only)   |
 
@@ -33,9 +32,8 @@ pip install --user Pillow
 python regenerate_icons.py
 ```
 
-This rewrites `tracker.ico`, `../../../ui/public/favicon.ico`, and
-`tracker_preview_256.png`. Then rebuild the native exe so the new icon is
-embedded:
+This rewrites `tracker.ico` and `../../../ui/public/favicon.ico`. Then
+rebuild the native exe so the new icon is embedded:
 
 ```cmd
 cmake --build ..\build --config Release

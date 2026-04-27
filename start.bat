@@ -1,10 +1,9 @@
 @echo off
 setlocal EnableDelayedExpansion
-chcp 65001 >nul
 
 REM ============================================================
-REM Activity Tracker — One-click launcher (Windows)
-REM ดับเบิลคลิกเพื่อเริ่มใช้งาน. หากไม่ได้รัน Administrator จะขอ UAC อัตโนมัติ
+REM  Activity Tracker - One-click launcher (Windows)
+REM  Double-click to start. Requests UAC elevation automatically.
 REM ============================================================
 
 REM --- self-elevate to admin if not already ----------------------------------
@@ -16,6 +15,7 @@ if %errorlevel% neq 0 (
 )
 
 cd /d "%~dp0"
+chcp 65001 >nul
 
 echo.
 echo ============================================================
@@ -53,18 +53,23 @@ if %errorlevel% neq 0 (
 )
 
 REM --- build native ETW binary if missing ------------------------------------
-if not exist "service\native\build\tracker_capture.exe" if not exist "service\native\build\Release\tracker_capture.exe" (
-    echo [INFO] Native ETW binary missing; building via Visual Studio Developer environment...
+set BIN1=service\native\build\tracker_capture.exe
+set BIN2=service\native\build\Release\tracker_capture.exe
+if not exist "%BIN1%" if not exist "%BIN2%" (
+    echo [INFO] Native ETW binary missing; building via Visual Studio Developer env...
     set VSDEVCMD=
-    for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSDEVCMD=%%i\Common7\Tools\VsDevCmd.bat
+    set VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe
+    if exist "!VSWHERE!" (
+        for /f "usebackq tokens=*" %%i in (`"!VSWHERE!" -latest -property installationPath`) do set VSDEVCMD=%%i\Common7\Tools\VsDevCmd.bat
+    )
     if not defined VSDEVCMD (
         echo [WARN] Visual Studio not detected. Native ETW capture will not work.
         echo        Install Visual Studio 2022+ with C++ workload, then re-run this script.
     ) else (
         cmd /c ""!VSDEVCMD!" -arch=amd64 && cmake -S service\native -B service\native\build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build service\native\build --config Release"
-        if not exist "service\native\build\tracker_capture.exe" if not exist "service\native\build\Release\tracker_capture.exe" (
+        if not exist "%BIN1%" if not exist "%BIN2%" (
             echo [ERROR] Native build failed. ETW capture will not work.
-            echo         Run scripts\setup-defender-exclusion.ps1 first if Defender is blocking the build output.
+            echo         Run scripts\setup-defender-exclusion.ps1 first if Defender is blocking output.
         )
     )
 )
