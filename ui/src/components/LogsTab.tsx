@@ -150,7 +150,7 @@ function LogsTabInner() {
   );
 
   return (
-    <main className="grid gap-4 p-6">
+    <main className="grid gap-4 p-4 md:p-6">
       <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
@@ -238,10 +238,10 @@ function LogsTabInner() {
             className="max-h-[68vh] overflow-auto"
             style={{ contain: 'strict' }}
           >
-            <div className="sticky top-0 z-10 grid grid-cols-[110px_70px_180px_1fr] bg-slate-950 text-xs text-slate-400">
+            <div className="sticky top-0 z-10 grid grid-cols-[80px_60px_1fr] sm:grid-cols-[100px_70px_140px_1fr] md:grid-cols-[110px_70px_180px_1fr] bg-slate-950 text-xs text-slate-400">
               <div className="px-3 py-2">Time</div>
               <div className="px-3 py-2">Level</div>
-              <div className="px-3 py-2">Logger</div>
+              <div className="hidden px-3 py-2 sm:block">Logger</div>
               <div className="px-3 py-2">Message</div>
             </div>
             {visible.length === 0 ? (
@@ -262,7 +262,7 @@ function LogsTabInner() {
                   return (
                     <div
                       key={vi.key}
-                      className="grid grid-cols-[110px_70px_180px_1fr] border-t border-slate-800 hover:bg-slate-800/40"
+                      className="grid grid-cols-[80px_60px_1fr] sm:grid-cols-[100px_70px_140px_1fr] md:grid-cols-[110px_70px_180px_1fr] border-t border-slate-800 hover:bg-slate-800/40"
                       style={{
                         position: 'absolute',
                         top: 0,
@@ -282,7 +282,7 @@ function LogsTabInner() {
                           {isRaw ? 'raw' : (entry.level ?? '-')}
                         </span>
                       </div>
-                      <div className="truncate px-3 py-1.5 text-slate-400">
+                      <div className="hidden truncate px-3 py-1.5 text-slate-400 sm:block">
                         {entry.logger ?? '-'}
                       </div>
                       <div className="truncate px-3 py-1.5 text-slate-200">

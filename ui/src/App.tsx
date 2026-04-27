@@ -294,11 +294,11 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800 px-6 py-4">
+      <header className="border-b border-slate-800 px-4 py-3 md:px-6 md:py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold">Activity Tracker</h1>
-            <p className="text-sm text-slate-400">
+            <h1 className="text-xl font-semibold md:text-2xl">Activity Tracker</h1>
+            <p className="hidden text-sm text-slate-400 sm:block">
               Realtime kernel ETW visibility — file, registry, process, network
             </p>
           </div>
@@ -349,7 +349,7 @@ export function App() {
       {activeTab === 'events' && (
       <>
       {/* === EVENTS TAB BODY === */}
-      <main className="grid gap-4 p-6 lg:grid-cols-[420px_1fr]">
+      <main className="grid gap-4 p-4 md:p-6 lg:grid-cols-[minmax(320px,420px)_1fr]">
         <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
           <ProcessPicker processes={processes} busy={busy} onStart={startSession} />
           <SessionList

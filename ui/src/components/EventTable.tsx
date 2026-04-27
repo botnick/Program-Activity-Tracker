@@ -66,13 +66,13 @@ function EventTableInner({ events, autoScroll, onSelectEvent, selectedId }: Prop
         className="max-h-[68vh] overflow-auto"
         style={{ contain: 'strict' }}
       >
-        <div className="sticky top-0 z-10 grid grid-cols-[110px_80px_120px_80px_1fr_1fr] bg-slate-950 text-xs text-slate-400">
+        <div className="sticky top-0 z-10 grid grid-cols-[80px_60px_1fr] sm:grid-cols-[100px_70px_100px_2fr] md:grid-cols-[110px_80px_120px_70px_2fr] lg:grid-cols-[110px_80px_120px_80px_1fr_1fr] bg-slate-950 text-xs text-slate-400">
           <div className="px-3 py-2">Time</div>
           <div className="px-3 py-2">Kind</div>
-          <div className="px-3 py-2">Op</div>
-          <div className="px-3 py-2">PID</div>
+          <div className="hidden px-3 py-2 sm:block">Op</div>
+          <div className="hidden px-3 py-2 md:block">PID</div>
           <div className="px-3 py-2">Target / Path</div>
-          <div className="px-3 py-2">Details</div>
+          <div className="hidden px-3 py-2 lg:block">Details</div>
         </div>
         {events.length === 0 ? (
           <div className="px-3 py-6 text-center text-xs text-slate-500">
@@ -88,7 +88,7 @@ function EventTableInner({ events, autoScroll, onSelectEvent, selectedId }: Prop
                 <div
                   key={vi.key}
                   onClick={() => handleRowClick(event)}
-                  className={`grid cursor-pointer grid-cols-[110px_80px_120px_80px_1fr_1fr] border-t border-slate-800 transition-colors motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-150 ${
+                  className={`grid cursor-pointer grid-cols-[80px_60px_1fr] sm:grid-cols-[100px_70px_100px_2fr] md:grid-cols-[110px_80px_120px_70px_2fr] lg:grid-cols-[110px_80px_120px_80px_1fr_1fr] border-t border-slate-800 transition-colors motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-150 ${
                     isSelected ? 'bg-cyan-500/10' : 'hover:bg-slate-800/40'
                   }`}
                   style={{
@@ -110,14 +110,14 @@ function EventTableInner({ events, autoScroll, onSelectEvent, selectedId }: Prop
                       {event.kind}
                     </span>
                   </div>
-                  <div className="truncate px-3 py-1.5 text-slate-300">
+                  <div className="hidden truncate px-3 py-1.5 text-slate-300 sm:block">
                     {event.operation ?? '-'}
                   </div>
-                  <div className="px-3 py-1.5 text-slate-500">{event.pid ?? '-'}</div>
+                  <div className="hidden px-3 py-1.5 text-slate-500 md:block">{event.pid ?? '-'}</div>
                   <div className="truncate px-3 py-1.5 text-slate-200">
                     {event.path ?? event.target ?? '-'}
                   </div>
-                  <div className="truncate px-3 py-1.5 text-slate-500">
+                  <div className="hidden truncate px-3 py-1.5 text-slate-500 lg:block">
                     {JSON.stringify(event.details ?? {})}
                   </div>
                 </div>
