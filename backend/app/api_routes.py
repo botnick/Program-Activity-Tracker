@@ -112,11 +112,6 @@ def _make_event_callback(loop: asyncio.AbstractEventLoop, session_id: str):
 
 # ---- routes ----------------------------------------------------------------
 
-@router.get("/api/health")
-def health() -> dict[str, Any]:
-    return {"status": "ok", "admin": is_admin()}
-
-
 @router.get("/api/processes")
 def list_processes() -> dict[str, Any]:
     items: list[dict[str, Any]] = []
