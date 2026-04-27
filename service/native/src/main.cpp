@@ -27,6 +27,7 @@
 #include "etw_session.hpp"
 #include "event_consumer.hpp"
 #include "json_writer.hpp"
+#include "list_processes.hpp"
 #include "path_translator.hpp"
 #include "pid_filter.hpp"
 #include "provider_guids.hpp"
@@ -196,6 +197,37 @@ int wmain(int argc, wchar_t** argv) {
         if (std::wcscmp(argv[i], L"--version") == 0 ||
             std::wcscmp(argv[i], L"-V") == 0) {
             std::fprintf(stdout, "tracker_capture %s\n", tracker::kEngineVersion);
+            std::fflush(stdout);
+            return 0;
+        }
+    }
+
+    // --list-processes: emit one NDJSON object per running process to
+    // stdout and exit. Used by the Python /api/processes endpoint as a
+    // faster alternative to psutil.process_iter on busy hosts. Each line
+    // has shape {pid, ppid, name, exe, username}; exe and username may be
+    // empty strings when the running tracker_capture lacks rights to query
+    // a given process. Must precede ParseArgs (which would reject the flag).
+    for (int i = 1; i < argc; ++i) {
+        if (std::wcscmp(argv[i], L"--list-processes") == 0) {
+            auto procs = tracker::EnumerateProcesses();
+            for (const auto& p : procs) {
+                tracker::JsonObject obj;
+                obj.emplace_back(
+                    "pid",
+                    tracker::JsonValue(static_cast<long long>(p.pid)));
+                obj.emplace_back(
+                    "ppid",
+                    tracker::JsonValue(static_cast<long long>(p.ppid)));
+                obj.emplace_back("name", tracker::WStr(p.name));
+                obj.emplace_back("exe", tracker::WStr(p.exe));
+                obj.emplace_back("username", tracker::WStr(p.username));
+                std::string line;
+                line.reserve(192);
+                tracker::JsonValue(std::move(obj)).Serialize(line);
+                line.push_back('\n');
+                tracker::WriteStdoutLine(line);
+            }
             std::fflush(stdout);
             return 0;
         }

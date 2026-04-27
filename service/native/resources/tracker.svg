@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0F172A"/>
+      <stop offset="1" stop-color="#1E293B"/>
+    </linearGradient>
+  </defs>
+  <!-- background rounded square -->
+  <rect width="256" height="256" rx="48" ry="48" fill="url(#bg)"/>
+  <!-- eye outline -->
+  <ellipse cx="128" cy="120" rx="80" ry="48" fill="none" stroke="#06B6D4" stroke-width="10"/>
+  <!-- pupil -->
+  <circle cx="128" cy="120" r="22" fill="#06B6D4"/>
+  <circle cx="120" cy="112" r="6" fill="#0F172A"/>
+  <!-- pulse line on bottom -->
+  <polyline points="32,200 80,200 96,180 112,216 128,168 144,216 160,188 176,200 224,200"
+            fill="none" stroke="#10B981" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

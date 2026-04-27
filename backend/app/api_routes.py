@@ -17,6 +17,7 @@ import io as _io
 import json
 import json as _json
 import logging
+import subprocess
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -27,7 +28,12 @@ import psutil
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
-from service.capture_service import CaptureService, CaptureTarget, is_admin
+from service.capture_service import (
+    CaptureService,
+    CaptureTarget,
+    _native_binary_path,
+    is_admin,
+)
 
 from .store import (
     ActivityEvent,
@@ -112,23 +118,68 @@ def _make_event_callback(loop: asyncio.AbstractEventLoop, session_id: str):
 
 # ---- routes ----------------------------------------------------------------
 
+def _list_processes_native() -> list[dict[str, Any]] | None:
+    """Try the native ``tracker_capture --list-processes`` binary.
+
+    Returns the parsed NDJSON rows on success, or ``None`` on any failure
+    (binary missing, non-zero exit, timeout, OS error). The HTTP handler
+    falls back to ``psutil.process_iter`` whenever this returns ``None``,
+    so the backend keeps working even when the native build is absent.
+    """
+    binary = _native_binary_path()
+    if binary is None:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603 - argv is fully controlled.
+            [str(binary), "--list-processes"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("native --list-processes failed: %s", exc)
+        return None
+    if result.returncode != 0:
+        logger.warning(
+            "native --list-processes exited %s: %s",
+            result.returncode,
+            result.stderr[:200],
+        )
+        return None
+    items: list[dict[str, Any]] = []
+    for raw in result.stdout.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            items.append(json.loads(line))
+        except (ValueError, json.JSONDecodeError):
+            continue
+    return items
+
+
 @router.get("/api/processes")
 def list_processes() -> dict[str, Any]:
-    items: list[dict[str, Any]] = []
-    for proc in psutil.process_iter(["pid", "name", "exe", "username", "ppid"]):
-        try:
-            info = proc.info
-            items.append(
-                {
-                    "pid": info.get("pid"),
-                    "ppid": info.get("ppid"),
-                    "name": info.get("name"),
-                    "exe": info.get("exe"),
-                    "username": info.get("username"),
-                }
-            )
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
+    items = _list_processes_native()
+    if items is None:
+        # Fallback: native binary missing or failed -- enumerate via psutil.
+        items = []
+        for proc in psutil.process_iter(
+            ["pid", "name", "exe", "username", "ppid"]
+        ):
+            try:
+                info = proc.info
+                items.append(
+                    {
+                        "pid": info.get("pid"),
+                        "ppid": info.get("ppid"),
+                        "name": info.get("name"),
+                        "exe": info.get("exe"),
+                        "username": info.get("username"),
+                    }
+                )
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
     items.sort(key=lambda x: (x.get("name") or "").lower())
     return {"items": items, "admin": is_admin()}
 
@@ -440,6 +491,15 @@ async def logs_stream_ws(websocket: WebSocket, stream: str) -> None:
                 await websocket.send_text(_json.dumps(payload))
     except WebSocketDisconnect:
         pass
+
+
+@router.get("/favicon.ico")
+def favicon() -> FileResponse:
+    """Serve the UI favicon — separate route so /assets mount isn't needed."""
+    fav = STATIC_DIR / "favicon.ico"
+    if not fav.exists():
+        raise HTTPException(status_code=404, detail="favicon not built")
+    return FileResponse(fav, media_type="image/x-icon")
 
 
 @router.get("/")

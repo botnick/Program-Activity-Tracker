@@ -16,6 +16,7 @@ add_executable(tracker_capture
     src/event_consumer.cpp
     src/tdh_parser.cpp
     src/path_translator.cpp
+    src/list_processes.cpp
 )
 
 target_link_libraries(tracker_capture PRIVATE
@@ -24,6 +25,16 @@ target_link_libraries(tracker_capture PRIVATE
     ws2_32
     ole32
     rpcrt4
+    psapi
 )
 
 target_include_directories(tracker_capture PRIVATE src)
+
+# Embed icon + version info on Windows. Additive block — does not touch
+# target_link_libraries / set_target_properties so concurrent edits to those
+# (e.g. linking psapi for --list-processes) merge cleanly.
+if(WIN32)
+    target_sources(tracker_capture PRIVATE
+        resources/tracker_capture.rc
+    )
+endif()
