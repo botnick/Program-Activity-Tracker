@@ -75,7 +75,7 @@ REM --- ensure backend deps installed -----------------------------------------
 echo [INFO] Checking backend dependencies...
 %PYTHON% -c "import fastapi, psutil, pydantic_settings" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [INFO] Installing backend dependencies (one-time)...
+    echo [INFO] Installing backend dependencies ^(one-time^)...
     %PYTHON% -m pip install --upgrade pip
     %PYTHON% -m pip install -e ".[dev]"
     if %errorlevel% neq 0 (
@@ -116,7 +116,7 @@ if not exist "ui\dist\index.html" (
     if %errorlevel% neq 0 (
         echo [WARN] npm not on PATH; UI will not be served. Install Node.js 20+.
     ) else (
-        echo [INFO] Building UI (one-time)...
+        echo [INFO] Building UI ^(one-time^)...
         pushd ui
         if not exist node_modules (
             call npm install
