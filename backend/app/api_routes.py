@@ -25,7 +25,7 @@ from typing import Any
 
 import psutil
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from service.capture_service import CaptureService, CaptureTarget, is_admin
 
@@ -131,6 +131,33 @@ def list_processes() -> dict[str, Any]:
             continue
     items.sort(key=lambda x: (x.get("name") or "").lower())
     return {"items": items, "admin": is_admin()}
+
+
+@router.get("/api/processes/icon")
+def process_icon(exe: str = Query(..., min_length=1)) -> Response:
+    """Return the Windows icon for an EXE as a PNG.
+
+    The path is validated against ``is_safe_exe_path`` (rejects relative,
+    UNC, and traversal-laden inputs). On any failure -- non-existent file,
+    non-Windows host, GDI failure -- we serve a 1x1 transparent PNG so the
+    UI never has to handle a 4xx/5xx for a missing icon.
+    """
+    from backend.app.icons import TRANSPARENT_PNG, get_or_extract_icon
+    from backend.app.observability import is_safe_exe_path
+
+    if not is_safe_exe_path(exe):
+        raise HTTPException(status_code=400, detail="invalid exe path")
+    try:
+        png = get_or_extract_icon(exe)
+    except Exception:  # noqa: BLE001 - never bubble 5xx for a UI icon
+        png = None
+    if not png:
+        png = TRANSPARENT_PNG
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @router.post("/api/sessions", response_model=SessionResponse)
@@ -326,6 +353,93 @@ async def stream_session(websocket: WebSocket, session_id: str) -> None:
         pass
     finally:
         hub.unsubscribe(session_id, queue)
+
+
+@router.get("/api/logs/streams")
+def logs_streams() -> dict[str, Any]:
+    """List available log streams with their on-disk size + path."""
+    from backend.app.observability import list_log_streams
+
+    log_dir = BASE_DIR / "logs"
+    try:
+        from backend.app.config import get_settings
+
+        settings = get_settings()
+        candidate = Path(settings.log_dir)
+        log_dir = candidate if candidate.is_absolute() else BASE_DIR / candidate
+    except Exception:  # noqa: BLE001
+        pass
+    return {"streams": list_log_streams(), "log_dir": str(log_dir)}
+
+
+@router.get("/api/logs/{stream}")
+def logs_tail(
+    stream: str,
+    tail: int = Query(200, ge=1, le=5000),
+) -> dict[str, Any]:
+    """Return the last ``tail`` lines of ``stream`` as parsed JSON entries."""
+    from backend.app.observability import read_log_tail
+
+    items = read_log_tail(stream, tail)
+    return {"items": items, "stream": stream, "tail": tail}
+
+
+@router.websocket("/ws/logs/{stream}")
+async def logs_stream_ws(websocket: WebSocket, stream: str) -> None:
+    """Live tail a log file. Sends recent backlog then polls for new bytes."""
+    from backend.app.config import get_settings
+    from backend.app.observability import LOG_STREAM_FILENAMES, read_log_tail
+
+    if stream not in LOG_STREAM_FILENAMES:
+        await websocket.close(code=4404)
+        return
+    await websocket.accept()
+
+    settings = get_settings()
+    log_dir = Path(settings.log_dir)
+    if not log_dir.is_absolute():
+        log_dir = BASE_DIR / log_dir
+    p = log_dir / LOG_STREAM_FILENAMES[stream]
+
+    # Send last 100 lines as backlog then tail.
+    backlog = read_log_tail(stream, 100)
+    for item in backlog:
+        await websocket.send_text(_json.dumps(item))
+
+    last_size = p.stat().st_size if p.exists() else 0
+    try:
+        while True:
+            await asyncio.sleep(0.25)
+            if not p.exists():
+                continue
+            try:
+                current = p.stat().st_size
+            except OSError:
+                continue
+            if current < last_size:
+                # File rotated; reset to start.
+                last_size = 0
+            if current == last_size:
+                continue
+            try:
+                with p.open("rb") as f:
+                    f.seek(last_size)
+                    chunk = f.read(current - last_size).decode(
+                        "utf-8", errors="replace"
+                    )
+            except OSError:
+                continue
+            last_size = current
+            for line in chunk.splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    payload: dict[str, Any] = _json.loads(line)
+                except (ValueError, json.JSONDecodeError):
+                    payload = {"message": line, "raw": True}
+                await websocket.send_text(_json.dumps(payload))
+    except WebSocketDisconnect:
+        pass
 
 
 @router.get("/")

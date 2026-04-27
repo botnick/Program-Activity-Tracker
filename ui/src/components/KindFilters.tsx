@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { Kind } from '../types';
 import { KINDS } from '../types';
 
@@ -9,7 +10,7 @@ type Props = {
   setAutoScroll: (value: boolean) => void;
 };
 
-export function KindFilters({ kindFilter, toggle, counts, autoScroll, setAutoScroll }: Props) {
+function KindFiltersInner({ kindFilter, toggle, counts, autoScroll, setAutoScroll }: Props) {
   return (
     <div className="flex items-center gap-2 text-xs text-slate-400">
       {KINDS.map((kind) => (
@@ -36,3 +37,5 @@ export function KindFilters({ kindFilter, toggle, counts, autoScroll, setAutoScr
     </div>
   );
 }
+
+export const KindFilters = memo(KindFiltersInner);

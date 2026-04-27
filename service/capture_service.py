@@ -31,6 +31,7 @@ from typing import Any
 import psutil
 
 logger = logging.getLogger(__name__)
+_native_logger = logging.getLogger("activity_tracker.native")
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -315,9 +316,13 @@ class CaptureService:
                 if not line:
                     continue
                 if line.startswith("[info]"):
-                    logger.info("native: %s", line)
+                    _native_logger.info(line)
+                elif line.startswith("[warn]"):
+                    _native_logger.warning(line)
+                elif line.startswith("[error]"):
+                    _native_logger.error(line)
                 else:
-                    logger.warning("native: %s", line)
+                    _native_logger.warning(line)
         finally:
             try:
                 proc.stderr.close()

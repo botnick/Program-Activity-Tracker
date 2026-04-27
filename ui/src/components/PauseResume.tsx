@@ -1,10 +1,12 @@
+import { memo } from 'react';
+
 type Props = {
   paused: boolean;
   setPaused: (value: boolean) => void;
   bufferedCount: number;
 };
 
-export function PauseResume({ paused, setPaused, bufferedCount }: Props) {
+function PauseResumeInner({ paused, setPaused, bufferedCount }: Props) {
   return (
     <button
       onClick={() => setPaused(!paused)}
@@ -25,3 +27,5 @@ export function PauseResume({ paused, setPaused, bufferedCount }: Props) {
     </button>
   );
 }
+
+export const PauseResume = memo(PauseResumeInner);

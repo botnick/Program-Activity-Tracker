@@ -1,9 +1,11 @@
+import { memo } from 'react';
+
 type Props = {
   admin: boolean | null;
   connected: boolean;
 };
 
-export function AdminBanner({ admin, connected }: Props) {
+function AdminBannerInner({ admin, connected }: Props) {
   return (
     <div className="flex items-center gap-3 text-sm">
       <span
@@ -30,7 +32,9 @@ export function AdminBanner({ admin, connected }: Props) {
   );
 }
 
-export function AdminWarning({ admin }: { admin: boolean | null }) {
+export const AdminBanner = memo(AdminBannerInner);
+
+function AdminWarningInner({ admin }: { admin: boolean | null }) {
   if (admin !== false) return null;
   return (
     <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
@@ -39,3 +43,5 @@ export function AdminWarning({ admin }: { admin: boolean | null }) {
     </div>
   );
 }
+
+export const AdminWarning = memo(AdminWarningInner);

@@ -1,5 +1,7 @@
+import { memo } from 'react';
 import type { Session } from '../types';
 import { captureBadge } from '../types';
+import { ProcessIcon } from './ProcessIcon';
 
 type Props = {
   sessions: Session[];
@@ -8,7 +10,7 @@ type Props = {
   onStop: (sessionId: string) => void;
 };
 
-export function SessionList({ sessions, selected, onSelect, onStop }: Props) {
+function SessionListInner({ sessions, selected, onSelect, onStop }: Props) {
   return (
     <div>
       <div className="mb-2 flex items-center justify-between text-sm text-slate-400">
@@ -36,7 +38,8 @@ export function SessionList({ sessions, selected, onSelect, onStop }: Props) {
                 className="block w-full text-left"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <div className="truncate font-medium">{session.exe_path}</div>
+                  <ProcessIcon exe={session.exe_path} size={28} className="mr-2 shrink-0" />
+                  <div className="min-w-0 flex-1 truncate font-medium">{session.exe_path}</div>
                   <span
                     className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${badge.cls}`}
                   >
@@ -66,3 +69,5 @@ export function SessionList({ sessions, selected, onSelect, onStop }: Props) {
     </div>
   );
 }
+
+export const SessionList = memo(SessionListInner);

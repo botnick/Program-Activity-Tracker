@@ -32,6 +32,7 @@ import re
 import time
 import uuid
 from collections.abc import Iterable
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,18 @@ _CONFIGURED_ATTR = "_tracker_logging_configured"
 
 # Repo root: backend/app/observability.py -> parents[2]
 _BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = _BASE_DIR  # public alias for callers that want a non-private name
+
+
+# Stream name -> on-disk filename. Used by both the live-tail endpoints and
+# the registered handler attachments below.
+LOG_STREAM_FILENAMES: dict[str, str] = {
+    "tracker": "tracker.log",
+    "events": "events.log",
+    "requests": "requests.log",
+    "errors": "errors.log",
+    "native": "native.log",
+}
 
 
 # ---- trace id --------------------------------------------------------------
@@ -122,6 +135,54 @@ def _resolve_log_dir() -> Path:
     return _BASE_DIR / raw
 
 
+def _attach_stream_handler(
+    name: str,
+    filename: str,
+    log_dir: Path,
+    level: int = logging.INFO,
+    formatter: logging.Formatter | None = None,
+) -> None:
+    """Attach a RotatingFileHandler to a named logger.
+
+    The handler is exclusive: the named logger's handlers are wiped first
+    so re-running configure_logging() doesn't double up.
+    """
+    lg = logging.getLogger(name)
+    for existing in list(lg.handlers):
+        with contextlib.suppress(Exception):
+            existing.close()
+        lg.removeHandler(existing)
+    lg.setLevel(level)
+    handler = RotatingFileHandler(
+        log_dir / filename,
+        maxBytes=50 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    handler.setLevel(level)
+    handler.setFormatter(formatter or JsonFormatter())
+    lg.addHandler(handler)
+    # Don't propagate to root, so these lines don't double-log into tracker.log.
+    lg.propagate = False
+
+
+class _ErrorsTeeHandler(logging.Handler):
+    """Forward WARNING+ records on the root logger into the errors stream.
+
+    Skips records that already originate from the errors logger to avoid an
+    emit -> handle -> emit loop.
+    """
+
+    def __init__(self, target: logging.Logger) -> None:
+        super().__init__(level=logging.WARNING)
+        self._target = target
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.name.startswith(self._target.name):
+            return
+        self._target.handle(record)
+
+
 def configure_logging() -> None:
     """Wire up console + rotating JSON file logging.
 
@@ -158,6 +219,21 @@ def configure_logging() -> None:
     root.addHandler(console_handler)
     root.addHandler(file_handler)
 
+    # Named-stream routed handlers — each named logger writes exclusively to
+    # its own file with `propagate=False` so output doesn't double-log into
+    # tracker.log.
+    _attach_stream_handler("activity_tracker.events", "events.log", log_dir)
+    _attach_stream_handler("activity_tracker.request", "requests.log", log_dir)
+    _attach_stream_handler(
+        "activity_tracker.errors", "errors.log", log_dir, level=logging.WARNING
+    )
+    _attach_stream_handler("activity_tracker.native", "native.log", log_dir)
+
+    # Tee any WARNING+ from the root logger (i.e. from any module that
+    # propagates to root) into the errors stream too.
+    errors_logger = logging.getLogger("activity_tracker.errors")
+    root.addHandler(_ErrorsTeeHandler(errors_logger))
+
     # The dedicated app logger inherits handlers from root; ensure level only.
     tracker_logger = logging.getLogger("activity_tracker")
     tracker_logger.setLevel(level)
@@ -165,6 +241,75 @@ def configure_logging() -> None:
     setattr(root, _CONFIGURED_ATTR, True)
 
     tracker_logger.info("logging configured (path=%s level=%s)", log_path, level_name)
+
+
+# ---- log stream helpers (file enumeration + tail) --------------------------
+
+def list_log_streams() -> list[dict[str, Any]]:
+    """Return one entry per known log stream with its on-disk path + size.
+
+    Files that don't exist yet are still listed so the UI can show all five
+    streams even before the backend has logged anything.
+    """
+    log_dir = _resolve_log_dir()
+    streams: list[dict[str, Any]] = []
+    for name, filename in LOG_STREAM_FILENAMES.items():
+        p = log_dir / filename
+        try:
+            size = p.stat().st_size if p.exists() else 0
+        except OSError:
+            size = 0
+        streams.append(
+            {
+                "name": name,
+                "path": str(p),
+                "size": size,
+                "exists": p.exists(),
+            }
+        )
+    return streams
+
+
+def read_log_tail(stream: str, tail: int = 200) -> list[dict[str, Any]]:
+    """Return the last ``tail`` JSON-decoded lines of ``stream``.
+
+    Lines that aren't valid JSON are returned as ``{"message": ..., "raw": True}``
+    so the UI can still render them. Unknown stream names yield ``[]``.
+    """
+    filename = LOG_STREAM_FILENAMES.get(stream)
+    if not filename:
+        return []
+    log_dir = _resolve_log_dir()
+    p = log_dir / filename
+    if not p.exists():
+        return []
+    items: list[dict[str, Any]] = []
+    try:
+        with p.open("rb") as f:
+            f.seek(0, 2)
+            end = f.tell()
+            chunk = 64 * 1024
+            buf = b""
+            pos = end
+            while pos > 0 and buf.count(b"\n") <= tail:
+                read = min(chunk, pos)
+                pos -= read
+                f.seek(pos)
+                buf = f.read(read) + buf
+            lines = buf.splitlines()[-tail:]
+        for raw in lines:
+            text = raw.decode("utf-8", errors="replace").strip()
+            if not text:
+                continue
+            try:
+                items.append(json.loads(text))
+            except (ValueError, json.JSONDecodeError):
+                items.append({"message": text, "raw": True})
+    except OSError as exc:
+        logging.getLogger("activity_tracker").warning(
+            "read_log_tail(%s): %s", stream, exc
+        )
+    return items
 
 
 # ---- request middleware ----------------------------------------------------

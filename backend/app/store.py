@@ -46,7 +46,7 @@ import uuid
 from collections import defaultdict, deque
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -224,11 +224,24 @@ class SessionStore:
         """Drain the write queue in batches and INSERT in a single tx."""
         # Dedicated connection — owned exclusively by this thread.
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        # Schedule the next retention sweep.
+        settings = get_settings()
+        retention_interval = max(1, int(settings.db_retention_check_minutes)) * 60
+        next_retention = time.monotonic() + retention_interval
         try:
             apply_migrations(conn)  # cheap; ensures pragmas on this conn too
             while True:
                 batch: list[ActivityEvent] = []
                 shutdown_requested = False
+
+                # Periodic retention sweep — bounds DB size at sustained
+                # capture rates so events.db doesn't grow forever.
+                if time.monotonic() >= next_retention:
+                    try:
+                        self._run_retention(conn)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("writer: retention sweep failed")
+                    next_retention = time.monotonic() + retention_interval
 
                 # Block until at least one item or the stop event fires.
                 try:
@@ -290,6 +303,23 @@ class SessionStore:
         finally:
             with contextlib.suppress(Exception):
                 conn.close()
+
+    @staticmethod
+    def _run_retention(conn: sqlite3.Connection) -> None:
+        """Drop events older than ``db_retention_days``. No-op when set to 0.
+
+        Runs inside the writer thread so it shares the writer's transaction
+        pattern. Called periodically from ``_writer_loop``.
+        """
+        days = int(get_settings().db_retention_days)
+        if days <= 0:
+            return
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cur = conn.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
+        deleted = cur.rowcount or 0
+        conn.commit()
+        if deleted:
+            logger.info("retention: pruned %d events older than %d day(s)", deleted, days)
 
     @staticmethod
     def _flush_batch(conn: sqlite3.Connection, batch: list[ActivityEvent]) -> None:

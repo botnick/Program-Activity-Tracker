@@ -1,9 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ActivityEvent, Kind } from '../types';
 import { KINDS } from '../types';
 
 type Props = {
-  events: ActivityEvent[];
+  // App.tsx mirrors `events` state into a ref so the sparkline can sample at
+  // 1 Hz without paying the cost of re-rendering on every WS-driven commit.
+  // The legacy `events` prop is still accepted for callers that haven't been
+  // migrated yet — when given, we pull the latest snapshot from it on tick.
+  eventsRef?: MutableRefObject<ActivityEvent[]>;
+  events?: ActivityEvent[];
 };
 
 const WINDOW_SECONDS = 60;
@@ -59,17 +64,26 @@ function Spark({ label, color, buckets }: { label: string; color: string; bucket
   );
 }
 
-export function RateSparkline({ events }: Props) {
-  const [now, setNow] = useState(() => Date.now());
-
+function RateSparklineInner({ eventsRef, events }: Props) {
+  // Mirror the prop into a ref so the 1 Hz tick effect doesn't depend on it.
+  const propRef = useRef<ActivityEvent[]>(events ?? []);
   useEffect(() => {
-    const handle = window.setInterval(() => setNow(Date.now()), 1000);
+    propRef.current = events ?? [];
+  }, [events]);
+
+  // Re-render at most once per second. Bin computation reads from the latest
+  // ref value, so high-frequency event ingestion never propagates to a render.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const handle = window.setInterval(() => {
+      setTick((t) => (t + 1) % 1_000_000);
+    }, 1000);
     return () => window.clearInterval(handle);
   }, []);
 
-  const series = useMemo(() => {
-    return KINDS.map((kind) => ({ kind, buckets: bin(events, kind, now) }));
-  }, [events, now]);
+  const source = eventsRef?.current ?? propRef.current;
+  const now = Date.now();
+  const series = KINDS.map((kind) => ({ kind, buckets: bin(source, kind, now) }));
 
   return (
     <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -79,3 +93,5 @@ export function RateSparkline({ events }: Props) {
     </div>
   );
 }
+
+export const RateSparkline = memo(RateSparklineInner);

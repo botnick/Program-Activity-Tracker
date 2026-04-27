@@ -40,7 +40,7 @@ if not defined PYTHON (
 )
 
 REM --- ensure backend deps installed -----------------------------------------
-%PYTHON% -c "import fastapi, psutil, etw" >nul 2>&1
+%PYTHON% -c "import fastapi, psutil, pydantic_settings" >nul 2>&1
 if %errorlevel% neq 0 (
     echo [INFO] Installing backend dependencies (one-time)...
     %PYTHON% -m pip install --upgrade pip
@@ -49,6 +49,23 @@ if %errorlevel% neq 0 (
         echo [ERROR] pip install failed.
         pause
         exit /b 1
+    )
+)
+
+REM --- build native ETW binary if missing ------------------------------------
+if not exist "service\native\build\tracker_capture.exe" if not exist "service\native\build\Release\tracker_capture.exe" (
+    echo [INFO] Native ETW binary missing; building via Visual Studio Developer environment...
+    set VSDEVCMD=
+    for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSDEVCMD=%%i\Common7\Tools\VsDevCmd.bat
+    if not defined VSDEVCMD (
+        echo [WARN] Visual Studio not detected. Native ETW capture will not work.
+        echo        Install Visual Studio 2022+ with C++ workload, then re-run this script.
+    ) else (
+        cmd /c ""!VSDEVCMD!" -arch=amd64 && cmake -S service\native -B service\native\build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build service\native\build --config Release"
+        if not exist "service\native\build\tracker_capture.exe" if not exist "service\native\build\Release\tracker_capture.exe" (
+            echo [ERROR] Native build failed. ETW capture will not work.
+            echo         Run scripts\setup-defender-exclusion.ps1 first if Defender is blocking the build output.
+        )
     )
 )
 

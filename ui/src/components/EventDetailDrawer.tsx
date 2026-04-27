@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import type { ActivityEvent } from '../types';
 
 type Props = {
@@ -20,15 +20,24 @@ function parentDir(path: string): string {
   return idx > 0 ? m.slice(0, idx) : m;
 }
 
-export function EventDetailDrawer({ event, onClose }: Props) {
+function EventDetailDrawerInner({ event, onClose }: Props) {
   const [copyHint, setCopyHint] = useState<string | null>(null);
   const [openHint, setOpenHint] = useState<string | null>(null);
 
-  if (!event) return null;
+  // Keep the last-seen event around so the drawer can finish its slide-out
+  // animation with content still rendered, instead of unmounting on close.
+  const lastEventRef = useRef<ActivityEvent | null>(event);
+  useEffect(() => {
+    if (event) lastEventRef.current = event;
+  }, [event]);
+  const display = event ?? lastEventRef.current;
 
-  const target = event.path ?? event.target ?? '';
-  const isWindowsPath = !!event.path && /^[A-Za-z]:/.test(event.path);
-  const canOpenLocation = event.kind === 'file' && isWindowsPath;
+  const isOpen = !!event;
+  const state = isOpen ? 'open' : 'closed';
+
+  const target = display?.path ?? display?.target ?? '';
+  const isWindowsPath = !!display?.path && /^[A-Za-z]:/.test(display.path);
+  const canOpenLocation = display?.kind === 'file' && isWindowsPath;
 
   const copy = async (text: string) => {
     try {
@@ -42,8 +51,8 @@ export function EventDetailDrawer({ event, onClose }: Props) {
   };
 
   const openLocation = () => {
-    if (!event.path) return;
-    const dir = parentDir(event.path);
+    if (!display?.path) return;
+    const dir = parentDir(display.path);
     try {
       window.location.href = `file://${encodeURI(dir)}`;
       setOpenHint('Browser may block file:// links');
@@ -58,103 +67,114 @@ export function EventDetailDrawer({ event, onClose }: Props) {
     <>
       <div
         onClick={onClose}
-        className="fixed inset-0 z-30 bg-slate-950/60 backdrop-blur-sm"
+        data-state={state}
+        className="fixed inset-0 z-30 bg-slate-950/60 backdrop-blur-sm transition-opacity duration-200 data-[state=closed]:pointer-events-none data-[state=closed]:opacity-0 data-[state=open]:opacity-100"
         aria-hidden="true"
       />
       <aside
-        className="fixed right-0 top-0 z-40 flex h-full w-full max-w-md flex-col border-l border-slate-800 bg-slate-950 shadow-2xl"
+        data-state={state}
+        className="fixed right-0 top-0 z-40 flex h-full w-full max-w-md flex-col border-l border-slate-800 bg-slate-950 shadow-2xl transition-transform duration-200 ease-out data-[state=closed]:pointer-events-none data-[state=closed]:translate-x-full data-[state=open]:translate-x-0"
         role="dialog"
+        aria-hidden={!isOpen}
         aria-label="Event details"
       >
-        <header className="flex items-start justify-between gap-2 border-b border-slate-800 px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span
-                className={`rounded border px-1.5 py-0.5 text-[10px] uppercase ${kindClass(event.kind)}`}
+        {display ? (
+          <>
+            <header className="flex items-start justify-between gap-2 border-b border-slate-800 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`rounded border px-1.5 py-0.5 text-[10px] uppercase ${kindClass(display.kind)}`}
+                  >
+                    {display.kind}
+                  </span>
+                  <span className="text-sm font-medium text-slate-100">
+                    {display.operation ?? '-'}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {new Date(display.timestamp).toLocaleString()}
+                </div>
+              </div>
+              <button
+                onClick={onClose}
+                className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-rose-500/60 hover:text-rose-200"
               >
-                {event.kind}
-              </span>
-              <span className="text-sm font-medium text-slate-100">
-                {event.operation ?? '-'}
-              </span>
-            </div>
-            <div className="mt-1 text-xs text-slate-500">
-              {new Date(event.timestamp).toLocaleString()}
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-rose-500/60 hover:text-rose-200"
-          >
-            Close
-          </button>
-        </header>
+                Close
+              </button>
+            </header>
 
-        <div className="flex-1 space-y-4 overflow-auto px-4 py-4 text-sm">
-          <section>
-            <div className="mb-1 text-xs uppercase tracking-wide text-slate-500">
-              Path / Target
-            </div>
-            <div className="flex items-start gap-2 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-              <code className="flex-1 break-all font-mono text-xs text-slate-100">
-                {target || '-'}
-              </code>
-              {target && (
-                <button
-                  onClick={() => copy(target)}
-                  className="shrink-0 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-300 hover:border-cyan-500/60 hover:text-cyan-200"
-                >
-                  {copyHint ?? 'Copy'}
-                </button>
-              )}
-            </div>
-            {canOpenLocation && (
-              <div className="mt-2">
-                <button
-                  onClick={openLocation}
-                  title="Browsers often block file:// navigation. If nothing opens, copy the path and paste into Explorer."
-                  className="rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-300 hover:border-emerald-500/60 hover:text-emerald-200"
-                >
-                  Open file location
-                </button>
-                {openHint && (
-                  <div className="mt-1 text-[11px] text-amber-300">{openHint}</div>
+            <div className="flex-1 space-y-4 overflow-auto px-4 py-4 text-sm">
+              <section>
+                <div className="mb-1 text-xs uppercase tracking-wide text-slate-500">
+                  Path / Target
+                </div>
+                <div className="flex items-start gap-2 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                  <code className="flex-1 break-all font-mono text-xs text-slate-100">
+                    {target || '-'}
+                  </code>
+                  {target && (
+                    <button
+                      onClick={() => copy(target)}
+                      className="shrink-0 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-300 hover:border-cyan-500/60 hover:text-cyan-200"
+                    >
+                      {copyHint ?? 'Copy'}
+                    </button>
+                  )}
+                </div>
+                {canOpenLocation && (
+                  <div className="mt-2">
+                    <button
+                      onClick={openLocation}
+                      title="Browsers often block file:// navigation. If nothing opens, copy the path and paste into Explorer."
+                      className="rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-300 hover:border-emerald-500/60 hover:text-emerald-200"
+                    >
+                      Open file location
+                    </button>
+                    {openHint && (
+                      <div className="mt-1 text-[11px] text-amber-300">{openHint}</div>
+                    )}
+                  </div>
                 )}
-              </div>
-            )}
-          </section>
+              </section>
 
-          <section className="grid grid-cols-2 gap-2">
-            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-              <div className="text-xs uppercase tracking-wide text-slate-500">PID</div>
-              <div className="font-mono text-sm text-slate-100">{event.pid ?? '-'}</div>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-              <div className="text-xs uppercase tracking-wide text-slate-500">PPID</div>
-              <div className="font-mono text-sm text-slate-100">{event.ppid ?? '-'}</div>
-            </div>
-          </section>
+              <section className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">PID</div>
+                  <div className="font-mono text-sm text-slate-100">{display.pid ?? '-'}</div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">PPID</div>
+                  <div className="font-mono text-sm text-slate-100">{display.ppid ?? '-'}</div>
+                </div>
+              </section>
 
-          <section>
-            <div className="mb-1 text-xs uppercase tracking-wide text-slate-500">Details</div>
-            <pre className="overflow-auto rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-200">
-              {JSON.stringify(event.details ?? {}, null, 2)}
-            </pre>
-          </section>
+              <section>
+                <div className="mb-1 text-xs uppercase tracking-wide text-slate-500">Details</div>
+                <pre className="overflow-auto rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-200">
+                  {JSON.stringify(display.details ?? {}, null, 2)}
+                </pre>
+              </section>
 
-          <section>
-            <div className="mb-1 text-xs uppercase tracking-wide text-slate-500">IDs</div>
-            <div className="space-y-1 rounded-xl border border-slate-800 bg-slate-900/60 p-3 font-mono text-[11px] text-slate-400">
-              <div>
-                <span className="text-slate-500">event:</span> {event.id}
-              </div>
-              <div>
-                <span className="text-slate-500">session:</span> {event.session_id}
-              </div>
+              <section>
+                <div className="mb-1 text-xs uppercase tracking-wide text-slate-500">IDs</div>
+                <div className="space-y-1 rounded-xl border border-slate-800 bg-slate-900/60 p-3 font-mono text-[11px] text-slate-400">
+                  <div>
+                    <span className="text-slate-500">event:</span> {display.id}
+                  </div>
+                  <div>
+                    <span className="text-slate-500">session:</span> {display.session_id}
+                  </div>
+                </div>
+              </section>
             </div>
-          </section>
-        </div>
+          </>
+        ) : (
+          <div className="flex-1" aria-hidden="true" />
+        )}
       </aside>
     </>
   );
 }
+
+export const EventDetailDrawer = memo(EventDetailDrawerInner);

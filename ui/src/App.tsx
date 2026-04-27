@@ -29,6 +29,9 @@ import { ProviderToggle } from './components/ProviderToggle';
 import { ProcessTreeView } from './components/ProcessTreeView';
 import { RateSparkline } from './components/RateSparkline';
 import { ToastStack } from './components/ToastStack';
+import { LogsTab } from './components/LogsTab';
+
+type TabId = 'events' | 'logs';
 
 export function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -36,6 +39,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [activeTab, setActiveTab] = useState<TabId>('events');
   const [kindFilter, setKindFilter] = useState<Set<Kind>>(new Set(KINDS));
   const [eventQuery, setEventQuery] = useState('');
   const [autoScroll, setAutoScroll] = useState(true);
@@ -50,6 +54,10 @@ export function App() {
   const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
   const { processes, admin, error: processError } = useProcessList();
 
+  // Stable session refresh ref so other callbacks (e.g. handleStreamError)
+  // can call it without taking a dependency on the changing function identity.
+  const refreshSessionsRef = useRef<() => Promise<void>>(async () => undefined);
+
   const handleStreamError = useCallback(
     (err: Event | string) => {
       const msg = typeof err === 'string' ? err : 'WebSocket error';
@@ -60,13 +68,12 @@ export function App() {
           label: 'Retry',
           run: () => {
             // Triggers a refresh of sessions; useEventStream re-subscribes when sessionId changes.
-            refreshSessions().catch(() => undefined);
+            refreshSessionsRef.current().catch(() => undefined);
           },
         },
         ttl: 6000,
       });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [pushToast],
   );
 
@@ -153,60 +160,77 @@ export function App() {
     [sessions, selectedSession],
   );
 
-  const refreshSessions = async () => {
+  const refreshSessions = useCallback(async () => {
     const result = await api<{ items: Session[] }>('/api/sessions');
     setSessions(result.items);
-    if (!selectedSession && result.items.length > 0) {
-      setSelectedSession(result.items[0].session_id);
-    }
-  };
+    setSelectedSession((current) => {
+      if (current) return current;
+      return result.items.length > 0 ? result.items[0].session_id : current;
+    });
+  }, []);
+
+  useEffect(() => {
+    refreshSessionsRef.current = refreshSessions;
+  }, [refreshSessions]);
 
   useEffect(() => {
     refreshSessions().catch((err) => setError(String(err)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refreshSessions]);
 
-  const startSession = async (body: { pid?: number; exe_path?: string }) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const session = await api<Session>('/api/sessions', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
-      setSessions((current) => [
-        session,
-        ...current.filter((s) => s.session_id !== session.session_id),
-      ]);
-      setSelectedSession(session.session_id);
-      pushToast({ kind: 'success', message: `Session started for ${session.exe_path}` });
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const startSession = useCallback(
+    async (body: { pid?: number; exe_path?: string }) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const session = await api<Session>('/api/sessions', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        setSessions((current) => [
+          session,
+          ...current.filter((s) => s.session_id !== session.session_id),
+        ]);
+        setSelectedSession(session.session_id);
+        pushToast({ kind: 'success', message: `Session started for ${session.exe_path}` });
+      } catch (err) {
+        setError(String(err));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [pushToast],
+  );
 
-  const stopSession = async (sessionId: string) => {
-    try {
-      await api(`/api/sessions/${sessionId}`, { method: 'DELETE' });
-      await refreshSessions();
-      pushToast({ kind: 'info', message: 'Session stopped' });
-    } catch (err) {
-      setError(String(err));
-    }
-  };
+  const stopSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        await api(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+        await refreshSessions();
+        pushToast({ kind: 'info', message: 'Session stopped' });
+      } catch (err) {
+        setError(String(err));
+      }
+    },
+    [pushToast, refreshSessions],
+  );
 
-  const toggleKind = (kind: Kind) => {
+  const toggleKind = useCallback((kind: Kind) => {
     setKindFilter((current) => {
       const next = new Set(current);
       if (next.has(kind)) next.delete(kind);
       else next.add(kind);
       return next;
     });
-  };
+  }, []);
 
   const sourceEvents = timeRange === 'live' ? liveEvents : queriedEvents;
+
+  // Mirror sourceEvents into a ref so child components that don't actually need
+  // a re-render on every event commit (e.g. RateSparkline) can sample lazily.
+  const sourceEventsRef = useRef<ActivityEvent[]>(sourceEvents);
+  useEffect(() => {
+    sourceEventsRef.current = sourceEvents;
+  }, [sourceEvents]);
 
   const visibleEvents = useMemo<ActivityEvent[]>(() => {
     const q = eventQuery.trim().toLowerCase();
@@ -239,6 +263,35 @@ export function App() {
     return f;
   }, [queryWindow, eventQuery, kindFilter]);
 
+  // Stable handlers passed to memoized children — change only when their
+  // genuine dependencies change, preserving React.memo shallow equality.
+  const handleSelectEvent = useCallback((event: ActivityEvent) => {
+    setSelectedEvent(event);
+  }, []);
+
+  const handleCloseDrawer = useCallback(() => {
+    setSelectedEvent(null);
+  }, []);
+
+  const handleAutoScrollChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      setAutoScroll(e.target.checked);
+    },
+    [],
+  );
+
+  const handleEventQueryChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      setEventQuery(e.target.value);
+    },
+    [],
+  );
+
+  const dismissError = useCallback(() => setError(null), []);
+  const toggleTree = useCallback(() => setShowTree((v) => !v), []);
+  const showEventsTab = useCallback(() => setActiveTab('events'), []);
+  const showLogsTab = useCallback(() => setActiveTab('logs'), []);
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <header className="border-b border-slate-800 px-6 py-4">
@@ -252,11 +305,39 @@ export function App() {
           <AdminBanner admin={admin} connected={connected} />
         </div>
         <AdminWarning admin={admin} />
+        <nav className="mt-3 flex items-center gap-2" role="tablist" aria-label="Main tabs">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'events'}
+            onClick={showEventsTab}
+            className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
+              activeTab === 'events'
+                ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-200'
+                : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-cyan-500/40 hover:text-cyan-200'
+            }`}
+          >
+            Events
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'logs'}
+            onClick={showLogsTab}
+            className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
+              activeTab === 'logs'
+                ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-200'
+                : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-cyan-500/40 hover:text-cyan-200'
+            }`}
+          >
+            Logs
+          </button>
+        </nav>
         {error && (
           <div className="mt-3 flex items-start justify-between gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-200">
             <span className="flex-1">{error}</span>
             <button
-              onClick={() => setError(null)}
+              onClick={dismissError}
               className="text-xs opacity-70 hover:opacity-100"
             >
               dismiss
@@ -265,6 +346,9 @@ export function App() {
         )}
       </header>
 
+      {activeTab === 'events' && (
+      <>
+      {/* === EVENTS TAB BODY === */}
       <main className="grid gap-4 p-6 lg:grid-cols-[420px_1fr]">
         <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
           <ProcessPicker processes={processes} busy={busy} onStart={startSession} />
@@ -289,7 +373,7 @@ export function App() {
                 <input
                   type="checkbox"
                   checked={autoScroll}
-                  onChange={(e) => setAutoScroll(e.target.checked)}
+                  onChange={handleAutoScrollChange}
                 />
                 follow
               </label>
@@ -326,15 +410,15 @@ export function App() {
             className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-cyan-500"
             placeholder="filter by path, target, operation, or any detail"
             value={eventQuery}
-            onChange={(event) => setEventQuery(event.target.value)}
+            onChange={handleEventQueryChange}
           />
 
-          <RateSparkline events={sourceEvents} />
+          <RateSparkline eventsRef={sourceEventsRef} />
 
           <EventTable
             events={visibleEvents}
             autoScroll={autoScroll && !paused && timeRange === 'live'}
-            onSelectEvent={setSelectedEvent}
+            onSelectEvent={handleSelectEvent}
             selectedId={selectedEvent?.id ?? null}
           />
 
@@ -349,7 +433,7 @@ export function App() {
           {selected && (
             <div className="rounded-2xl border border-slate-800 bg-slate-950">
               <button
-                onClick={() => setShowTree((v) => !v)}
+                onClick={toggleTree}
                 className="flex w-full items-center justify-between px-4 py-2 text-xs text-slate-400 hover:text-slate-200"
               >
                 <span>Process tree (pid {selected.pid})</span>
@@ -364,8 +448,13 @@ export function App() {
           )}
         </section>
       </main>
+      {/* === END EVENTS TAB BODY === */}
+      </>
+      )}
 
-      <EventDetailDrawer event={selectedEvent} onClose={() => setSelectedEvent(null)} />
+      {activeTab === 'logs' && <LogsTab />}
+
+      <EventDetailDrawer event={selectedEvent} onClose={handleCloseDrawer} />
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );

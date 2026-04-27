@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { Kind } from '../types';
 import { KINDS } from '../types';
 
@@ -14,7 +15,7 @@ const KIND_TINT: Record<Kind, string> = {
   network: 'border-amber-500/60 bg-amber-500/10 text-amber-200',
 };
 
-export function ProviderToggle({ enabled, toggle, counts }: Props) {
+function ProviderToggleInner({ enabled, toggle, counts }: Props) {
   return (
     <div className="flex items-center gap-1.5 text-xs">
       {KINDS.map((kind) => {
@@ -36,3 +37,5 @@ export function ProviderToggle({ enabled, toggle, counts }: Props) {
     </div>
   );
 }
+
+export const ProviderToggle = memo(ProviderToggleInner);

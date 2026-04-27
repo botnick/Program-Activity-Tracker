@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     log_dir: str = "logs"
     log_level: str = "INFO"
     metrics_enabled: bool = True
+    # Retention: drop events older than this many days during periodic vacuum.
+    # Set to 0 to disable retention (events grow without bound).
+    db_retention_days: int = 30
+    # How often the writer thread runs the retention sweep.
+    db_retention_check_minutes: int = 60
 
     model_config = SettingsConfigDict(
         env_prefix="TRACKER_",

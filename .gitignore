@@ -28,6 +28,7 @@ build/
 events.db
 logs/
 *.log
+cache/
 
 # IDE
 .vscode/

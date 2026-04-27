@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { memo, useCallback, useEffect, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ActivityEvent } from '../types';
 
@@ -19,7 +19,7 @@ function kindClass(kind: string): string {
   return 'bg-slate-500/10 text-slate-300';
 }
 
-export function EventTable({ events, autoScroll, onSelectEvent, selectedId }: Props) {
+function EventTableInner({ events, autoScroll, onSelectEvent, selectedId }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
 
   const virtualizer = useVirtualizer({
@@ -30,12 +30,31 @@ export function EventTable({ events, autoScroll, onSelectEvent, selectedId }: Pr
     getItemKey: (index) => events[index]?.id ?? index,
   });
 
+  // rAF-throttled auto-scroll: many events arriving in the same frame collapse
+  // into a single scrollTop write, eliminating reflow churn at high event rates.
+  const scrollFrameRef = useRef<number | null>(null);
   useEffect(() => {
     if (!autoScroll) return;
-    const el = parentRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [events, autoScroll]);
+    if (scrollFrameRef.current !== null) return;
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const el = parentRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        cancelAnimationFrame(scrollFrameRef.current);
+        scrollFrameRef.current = null;
+      }
+    };
+  }, [events.length, autoScroll]);
+
+  const handleRowClick = useCallback(
+    (event: ActivityEvent) => {
+      onSelectEvent?.(event);
+    },
+    [onSelectEvent],
+  );
 
   const items = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
@@ -68,8 +87,8 @@ export function EventTable({ events, autoScroll, onSelectEvent, selectedId }: Pr
               return (
                 <div
                   key={vi.key}
-                  onClick={() => onSelectEvent?.(event)}
-                  className={`grid cursor-pointer grid-cols-[110px_80px_120px_80px_1fr_1fr] border-t border-slate-800 transition-colors ${
+                  onClick={() => handleRowClick(event)}
+                  className={`grid cursor-pointer grid-cols-[110px_80px_120px_80px_1fr_1fr] border-t border-slate-800 transition-colors motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-150 ${
                     isSelected ? 'bg-cyan-500/10' : 'hover:bg-slate-800/40'
                   }`}
                   style={{
@@ -110,3 +129,5 @@ export function EventTable({ events, autoScroll, onSelectEvent, selectedId }: Pr
     </div>
   );
 }
+
+export const EventTable = memo(EventTableInner);

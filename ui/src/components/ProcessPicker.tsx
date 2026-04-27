@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import type { ProcessInfo } from '../types';
+import { ProcessIcon } from './ProcessIcon';
 
 type Props = {
   processes: ProcessInfo[];
@@ -7,7 +8,7 @@ type Props = {
   onStart: (body: { pid?: number; exe_path?: string }) => void;
 };
 
-export function ProcessPicker({ processes, busy, onStart }: Props) {
+function ProcessPickerInner({ processes, busy, onStart }: Props) {
   const [processQuery, setProcessQuery] = useState('');
   const [manualPath, setManualPath] = useState('');
 
@@ -43,6 +44,7 @@ export function ProcessPicker({ processes, busy, onStart }: Props) {
               onClick={() => onStart({ pid: proc.pid })}
               className="flex w-full items-start justify-between gap-2 border-b border-slate-800 px-3 py-2 text-left text-xs last:border-0 hover:bg-slate-800/60 disabled:opacity-60"
             >
+              <ProcessIcon exe={proc.exe} size={28} className="mr-2 shrink-0" />
               <div className="min-w-0 flex-1">
                 <div className="truncate font-medium text-slate-100">
                   {proc.name ?? '(unknown)'}
@@ -79,3 +81,5 @@ export function ProcessPicker({ processes, busy, onStart }: Props) {
     </>
   );
 }
+
+export const ProcessPicker = memo(ProcessPickerInner);

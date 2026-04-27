@@ -26,12 +26,21 @@
 3. Windows จะถาม UAC (ยืนยัน Administrator) → กด **Yes**
 4. หน้าต่าง CMD ใหม่จะเปิดขึ้น โดยจะ:
    - ติดตั้ง Python deps อัตโนมัติ (ครั้งแรกใช้เวลา ~1 นาที)
+   - Build native ETW binary ด้วย CMake/MSVC อัตโนมัติถ้ายังไม่มี (~10 วินาที)
    - Build UI ด้วย npm (ครั้งแรกใช้เวลา ~30 วินาที)
    - เริ่ม backend ที่ `http://127.0.0.1:8000`
    - เปิดเบราว์เซอร์ให้อัตโนมัติหลัง 3 วินาที
 5. เมื่อเห็นแถบสีเขียว `admin: yes` ที่มุมบนขวา → พร้อมใช้งาน
 
 ปิดระบบ: ปิดหน้าต่าง CMD หรือดับเบิลคลิก `stop.bat`
+
+### 2.1 (ครั้งเดียว) ตั้ง Defender exclusion เพื่อไม่ให้ scan native binary
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-defender-exclusion.ps1
+```
+สคริปต์จะขอ UAC แล้ว exclude path `service\native\build` + process `tracker_capture.exe` —
+ป้องกัน Defender quarantine ตอน build / รัน. ไม่จำเป็นถ้า Defender ปิดอยู่แล้ว
 
 ---
 
@@ -76,6 +85,31 @@
 ปุ่มมุมขวาบน:
 - **CSV**: เปิดด้วย Excel ได้เลย
 - **JSONL**: ใช้กับเครื่องมือวิเคราะห์ภายนอก
+
+### 3.7 ดู Logs realtime (Tab Logs)
+
+UI มี 2 tab: **Events** (default) และ **Logs**. กด tab "Logs" เพื่อดู log file ของระบบ:
+
+| Stream | บอกอะไร |
+|---|---|
+| `tracker` | Log รวมทั้งหมด (ทุกระดับ) |
+| `events` | Log เฉพาะ event ingestion |
+| `requests` | HTTP request trace (มี trace_id, duration) |
+| `errors` | WARNING+ จากทุก logger รวมไว้ |
+| `native` | stderr ของ `tracker_capture.exe` แยกเป็นไฟล์ของตัวเอง |
+
+แต่ละ log file เก็บใน `logs/` ขนาดสูงสุด 50MB × 3 backup = 150MB ต่อ stream
+มี search box, level filter, live-tail toggle — ดูได้แบบ realtime ผ่าน WebSocket
+
+### 3.8 Performance — ออกแบบไม่ให้กระตุก
+
+ที่ rate **1000 events/sec** UI ยัง smooth เพราะ:
+- WS messages ทุกตัวสะสมใน ref → flush ครั้งเดียวต่อ animation frame (60Hz max)
+- Auto-scroll throttle 1 reflow/frame → ไม่มี layout thrashing
+- Sparkline update 1Hz ไม่ใช่ 60Hz
+- Drawer ไม่ mount/unmount → slide-in/out ผ่าน CSS transition
+- ทุก component memoized — re-render เฉพาะที่จำเป็น
+- Process list diff-update — รายการที่ไม่เปลี่ยนคงไว้เดิม ไม่ flicker
 
 ---
 
