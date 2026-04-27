@@ -4,12 +4,6 @@ All knobs flow through ``Settings``. Environment variables are read with the
 ``TRACKER_`` prefix (e.g. ``TRACKER_PORT=9000``) and a ``.env`` file at the
 repo root is honoured if present. Subsequent agents (storage, observability,
 auth) are expected to add new fields here rather than scatter constants.
-
-Capture engine selection: ``capture_engine`` chooses between the native C++
-ETW backend (``service/native/build/tracker_capture.exe``) and the legacy
-``pywintrace`` Python backend. ``"auto"`` (default) uses the native binary
-when present and falls back to ``pywintrace`` otherwise. ``"native"``
-requires the binary; ``"python"`` forces the legacy backend.
 """
 
 from __future__ import annotations
@@ -35,7 +29,6 @@ class Settings(BaseSettings):
     log_dir: str = "logs"
     log_level: str = "INFO"
     metrics_enabled: bool = True
-    capture_engine: str = "auto"  # auto | native | python
 
     model_config = SettingsConfigDict(
         env_prefix="TRACKER_",

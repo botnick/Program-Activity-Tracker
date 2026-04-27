@@ -51,10 +51,26 @@ PropertyValue InterpretProperty(ULONG in_type, const std::vector<uint8_t>& bytes
             size_t n = bytes.size();
             const char* p = reinterpret_cast<const char*>(bytes.data());
             while (n > 0 && p[n - 1] == '\0') --n;
-            int wlen = MultiByteToWideChar(CP_ACP, 0, p, static_cast<int>(n),
+            // ETW providers labelled by TDH as ANSISTRING are increasingly
+            // emitting UTF-8 in practice (e.g. Win10+ kernel-file events on
+            // systems with non-Latin filenames). CP_ACP-only decoding mojibakes
+            // those payloads. Try UTF-8 strict first; if the bytes aren't
+            // valid UTF-8, fall back to the legacy ACP path so older
+            // providers still work. Do NOT "simplify" this back to a single
+            // CP_ACP call — that regresses non-Latin filename handling.
+            int wlen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, p,
+                                           static_cast<int>(n), nullptr, 0);
+            UINT cp = CP_UTF8;
+            DWORD flags = MB_ERR_INVALID_CHARS;
+            if (wlen == 0 && GetLastError() == ERROR_NO_UNICODE_TRANSLATION) {
+                cp = CP_ACP;
+                flags = 0;
+                wlen = MultiByteToWideChar(cp, flags, p, static_cast<int>(n),
                                            nullptr, 0);
+            }
+            if (wlen <= 0) return std::wstring();
             std::wstring w(static_cast<size_t>(wlen), L'\0');
-            MultiByteToWideChar(CP_ACP, 0, p, static_cast<int>(n), w.data(),
+            MultiByteToWideChar(cp, flags, p, static_cast<int>(n), w.data(),
                                 wlen);
             return w;
         }

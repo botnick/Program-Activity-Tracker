@@ -31,6 +31,53 @@ std::mutex& StdoutMutex() {
     return m;
 }
 
+}  // namespace
+
+void WriteStdoutLine(const std::string& line) {
+    std::lock_guard<std::mutex> lock(StdoutMutex());
+    std::fwrite(line.data(), 1, line.size(), stdout);
+    if (line.empty() || line.back() != '\n') {
+        std::fputc('\n', stdout);
+    }
+    std::fflush(stdout);
+}
+
+std::string FormatFiletimeIso8601(uint64_t filetime_ticks) {
+    if (filetime_ticks == 0) {
+        return std::string();
+    }
+    FILETIME ft{};
+    ULARGE_INTEGER u;
+    u.QuadPart = filetime_ticks;
+    ft.dwLowDateTime = u.LowPart;
+    ft.dwHighDateTime = u.HighPart;
+    SYSTEMTIME st{};
+    if (!FileTimeToSystemTime(&ft, &st)) {
+        return std::string();
+    }
+    char buf[32];
+    int n = std::snprintf(buf, sizeof(buf),
+                          "%04u-%02u-%02uT%02u:%02u:%02uZ",
+                          st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute,
+                          st.wSecond);
+    if (n <= 0) return std::string();
+    return std::string(buf, static_cast<size_t>(n));
+}
+
+std::string NowIso8601Utc() {
+    SYSTEMTIME st{};
+    GetSystemTime(&st);
+    char buf[32];
+    int n = std::snprintf(buf, sizeof(buf),
+                          "%04u-%02u-%02uT%02u:%02u:%02uZ",
+                          st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute,
+                          st.wSecond);
+    if (n <= 0) return "1970-01-01T00:00:00Z";
+    return std::string(buf, static_cast<size_t>(n));
+}
+
+namespace {
+
 // Format a FILETIME (100ns ticks since 1601-01-01) as ISO 8601 UTC with
 // microsecond precision.
 std::string FormatTimestamp(ULONGLONG filetime_ticks) {
@@ -158,16 +205,76 @@ bool EventConsumer::Start(const std::wstring& session_name) {
         ProcessTrace(&trace_handle_, 1, nullptr, nullptr);
         current_ = nullptr;
     });
+
+    // Spawn the heartbeat thread only if cadence > 0. Disabled (0) is a
+    // valid configuration the wrapper can request.
+    if (cfg_.stats_interval_ms > 0) {
+        {
+            std::lock_guard<std::mutex> lock(stats_mu_);
+            stats_stop_ = false;
+        }
+        stats_worker_ = std::thread([this]() { StatsLoop(); });
+    }
     return true;
 }
 
 void EventConsumer::Stop() {
     if (!running_.exchange(false)) return;
+    // Wake the stats thread before joining so it can exit promptly instead
+    // of sleeping out the rest of its interval.
+    {
+        std::lock_guard<std::mutex> lock(stats_mu_);
+        stats_stop_ = true;
+    }
+    stats_cv_.notify_all();
+    if (stats_worker_.joinable()) stats_worker_.join();
+
     if (trace_handle_ != INVALID_PROCESSTRACE_HANDLE) {
         CloseTrace(trace_handle_);
         trace_handle_ = INVALID_PROCESSTRACE_HANDLE;
     }
     if (worker_.joinable()) worker_.join();
+}
+
+size_t EventConsumer::FileCacheSize() const {
+    std::lock_guard<std::mutex> lock(file_cache_mu_);
+    return file_paths_.size();
+}
+
+void EventConsumer::StatsLoop() {
+    const auto interval = std::chrono::milliseconds(cfg_.stats_interval_ms);
+    std::unique_lock<std::mutex> lock(stats_mu_);
+    while (!stats_stop_) {
+        if (stats_cv_.wait_for(lock, interval,
+                               [this]() { return stats_stop_; })) {
+            break;
+        }
+        // Don't hold stats_mu_ while serializing / writing — emit unlocked
+        // and reacquire for the next wait.
+        lock.unlock();
+        EmitStatsSentinel();
+        lock.lock();
+    }
+}
+
+void EventConsumer::EmitStatsSentinel() {
+    JsonObject obj;
+    obj.emplace_back("type", JsonValue(std::string("stats")));
+    obj.emplace_back("tracked_pids",
+                     JsonValue(static_cast<long long>(pids_.Size())));
+    obj.emplace_back("file_object_cache_size",
+                     JsonValue(static_cast<long long>(FileCacheSize())));
+    obj.emplace_back("errors",
+                     JsonValue(static_cast<long long>(Errors())));
+    obj.emplace_back("last_event_at",
+                     JsonValue(FormatFiletimeIso8601(LastEventFiletime())));
+    obj.emplace_back("ts", JsonValue(NowIso8601Utc()));
+
+    std::string out;
+    out.reserve(192);
+    JsonValue(std::move(obj)).Serialize(out);
+    out.push_back('\n');
+    WriteStdoutLine(out);
 }
 
 void WINAPI EventConsumer::EventCallbackThunk(PEVENT_RECORD record) {
@@ -181,6 +288,7 @@ void EventConsumer::HandleEvent(PEVENT_RECORD record) {
 
     DecodedEvent ev;
     if (!DecodeEvent(record, ev)) {
+        errors_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
 
@@ -367,11 +475,8 @@ void EventConsumer::HandleEvent(PEVENT_RECORD record) {
     JsonValue(std::move(root)).Serialize(out_line);
     out_line.push_back('\n');
 
-    {
-        std::lock_guard<std::mutex> lock(StdoutMutex());
-        std::fwrite(out_line.data(), 1, out_line.size(), stdout);
-        std::fflush(stdout);
-    }
+    WriteStdoutLine(out_line);
+    last_event_filetime_.store(ev.timestamp_ft, std::memory_order_relaxed);
 }
 
 void EventConsumer::TouchFileObject(uint64_t file_object, std::wstring path) {

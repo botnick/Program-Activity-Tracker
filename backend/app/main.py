@@ -28,7 +28,6 @@ if str(BASE_DIR) not in sys.path:
 
 from backend.app import api_routes, observability  # noqa: E402
 from backend.app.store import store  # noqa: E402
-from service.etw_cleanup import sweep_orphan_sessions  # noqa: E402
 
 logger = logging.getLogger("activity_tracker")
 
@@ -63,14 +62,9 @@ def create_app() -> FastAPI:
     app.include_router(observability.router)
     app.include_router(api_routes.router)
 
-    @app.on_event("startup")
-    def _on_startup() -> None:
-        try:
-            stopped = sweep_orphan_sessions()
-            if stopped:
-                logger.info("swept orphan ETW sessions", extra={"sessions": stopped})
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("orphan sweep failed: %s", exc)
+    # Orphan ETW session cleanup now runs inside the native binary itself
+    # (service/native/src/etw_session.cpp::SweepOrphans), so no startup hook
+    # is needed here.
 
     @app.on_event("shutdown")
     def _on_shutdown() -> None:

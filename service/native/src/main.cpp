@@ -72,6 +72,7 @@ struct Args {
     bool engine_network = true;
     std::wstring session_name;
     bool no_orphan_cleanup = false;
+    int stats_interval_ms = 1000;  // 0 disables heartbeat
 };
 
 std::wstring DefaultSessionName(DWORD pid) {
@@ -135,12 +136,20 @@ bool ParseArgs(int argc, wchar_t** argv, Args& args) {
             if (!next(args.session_name)) return false;
         } else if (a == L"--no-orphan-cleanup") {
             args.no_orphan_cleanup = true;
+        } else if (a == L"--stats-interval-ms") {
+            std::wstring v;
+            if (!next(v)) return false;
+            long long ms = std::wcstoll(v.c_str(), nullptr, 10);
+            if (ms < 0) ms = 0;
+            args.stats_interval_ms = static_cast<int>(ms);
         } else if (a == L"--help" || a == L"-h") {
             std::fprintf(stderr,
                          "tracker_capture --pid <int> "
                          "[--pid-create-time <epoch_ms>] "
                          "[--engines file,registry,process,network] "
-                         "[--session-name <name>] [--no-orphan-cleanup]\n");
+                         "[--session-name <name>] [--no-orphan-cleanup] "
+                         "[--stats-interval-ms <int>] "
+                         "[--version|-V]\n");
             return false;
         } else {
             LogE("unknown argument: " + tracker::WideToUtf8(a));
@@ -180,6 +189,18 @@ int wmain(int argc, wchar_t** argv) {
     // Make stdout binary so we don't get CRLF translation on JSON.
     _setmode(_fileno(stdout), _O_BINARY);
 
+    // --version / -V: print version banner and exit BEFORE doing any other
+    // work. Honoured even when other flags are present so the Python wrapper
+    // can probe with a single argv. Must precede --help and ParseArgs.
+    for (int i = 1; i < argc; ++i) {
+        if (std::wcscmp(argv[i], L"--version") == 0 ||
+            std::wcscmp(argv[i], L"-V") == 0) {
+            std::fprintf(stdout, "tracker_capture %s\n", tracker::kEngineVersion);
+            std::fflush(stdout);
+            return 0;
+        }
+    }
+
     Args args;
     if (!ParseArgs(argc, argv, args)) {
         return 2;
@@ -208,6 +229,35 @@ int wmain(int argc, wchar_t** argv) {
         return 3;
     }
     LogI("trace session started");
+
+    // Hello-sentinel handshake: emit one JSON line on stdout BEFORE
+    // ProcessTrace begins streaming events. The Python wrapper aborts on
+    // version mismatch, so this must be the very first stdout line. Only
+    // reachable on a successful session.Start (i.e. running elevated) — on
+    // ACCESS_DENIED we exit above with no stdout output, which is correct.
+    {
+        tracker::JsonObject hello;
+        hello.emplace_back("type", tracker::JsonValue(std::string("hello")));
+        hello.emplace_back("version",
+                           tracker::JsonValue(std::string(tracker::kEngineVersion)));
+        hello.emplace_back(
+            "session_name",
+            tracker::JsonValue(tracker::WideToUtf8(args.session_name)));
+        hello.emplace_back(
+            "target_pid",
+            tracker::JsonValue(static_cast<long long>(args.pid)));
+        hello.emplace_back(
+            "pid",
+            tracker::JsonValue(
+                static_cast<long long>(GetCurrentProcessId())));
+        hello.emplace_back("started_at",
+                           tracker::JsonValue(tracker::NowIso8601Utc()));
+        std::string line;
+        line.reserve(192);
+        tracker::JsonValue(std::move(hello)).Serialize(line);
+        line.push_back('\n');
+        tracker::WriteStdoutLine(line);
+    }
 
     auto enable = [&](const tracker::ProviderRequest& r,
                       const char* name) -> bool {
@@ -251,6 +301,7 @@ int wmain(int argc, wchar_t** argv) {
     cfg.engine_registry = args.engine_registry;
     cfg.engine_process = args.engine_process;
     cfg.engine_network = args.engine_network;
+    cfg.stats_interval_ms = args.stats_interval_ms;
 
     tracker::EventConsumer consumer(cfg, translator, pids);
     if (!consumer.Start(args.session_name)) {
