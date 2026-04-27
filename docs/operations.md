@@ -1,155 +1,103 @@
-# Operations Guide
+# Operations
 
-This guide covers running the Activity Tracker backend in long-lived /
-unattended deployments. The application is intended for **single-host,
-single-operator** use; treat it like a developer tool, not a network
-service.
+## Daily run
 
-## Running as a Windows Service (NSSM)
+Double-click `start.bat` at the repo root. Stops via `stop.bat` or by closing the CMD window.
 
-ETW kernel providers require Administrator. The simplest unattended path is
-[NSSM](https://nssm.cc/) wrapping uvicorn under the LocalSystem account (or
-a service account with the `SeSecurityPrivilege` right):
+## Run as a Windows service (NSSM)
 
-```powershell
-# 1. Install (one-shot, opens NSSM's GUI)
-nssm install ActivityTracker "C:\Path\To\python.exe" `
-    "-m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000"
-nssm set ActivityTracker AppDirectory "C:\Users\btx\Desktop\kuy"
-nssm set ActivityTracker AppStdout    "C:\Users\btx\Desktop\kuy\logs\stdout.log"
-nssm set ActivityTracker AppStderr    "C:\Users\btx\Desktop\kuy\logs\stderr.log"
-nssm set ActivityTracker AppRotateFiles 1
-nssm set ActivityTracker AppRotateBytes 104857600
-nssm set ActivityTracker ObjectName LocalSystem
-nssm set ActivityTracker Start SERVICE_AUTO_START
+For a long-lived background install, wrap the backend in [NSSM](https://nssm.cc):
 
-# 2. Start
-nssm start ActivityTracker
-
-# 3. Status / logs
-nssm status ActivityTracker
-Get-Content -Tail 200 -Wait C:\Users\btx\Desktop\kuy\logs\tracker.log
+```cmd
+nssm install ActivityTracker "C:\Path\To\python.exe" "-m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000"
+nssm set    ActivityTracker AppDirectory "C:\Path\To\activity-tracker"
+nssm set    ActivityTracker AppEnvironmentExtra TRACKER_DB_PATH=C:\ProgramData\ActivityTracker\events.db
+nssm set    ActivityTracker AppStdout C:\ProgramData\ActivityTracker\service.out.log
+nssm set    ActivityTracker AppStderr C:\ProgramData\ActivityTracker\service.err.log
+nssm set    ActivityTracker ObjectName LocalSystem    :: required for ETW
+nssm start  ActivityTracker
 ```
 
-Notes:
-- LocalSystem already has Administrator privileges. If you prefer a
-  dedicated account, give it the `SeDebugPrivilege` and
-  `SeSecurityPrivilege` rights and add it to the
-  `Performance Log Users` group.
-- NSSM auto-restarts on crash by default. Adjust the throttle / exit-action
-  policy if uvicorn ever spirals.
+Verify: `Get-Service ActivityTracker` should show `Running`. Logs land in `C:\ProgramData\ActivityTracker\`.
 
 ## Logs
 
-`backend/app/observability.configure_logging()` wires two handlers on the
-root logger:
+Five rotating JSON files in `<repo>/logs/` (or `TRACKER_LOG_DIR`):
 
-| Handler  | Format            | Destination                                |
-|----------|-------------------|--------------------------------------------|
-| Console  | human-readable    | stdout (captured by NSSM)                  |
-| File     | one JSON per line | `<repo>/logs/tracker.log` (rotating)       |
+| Stream | Source | Cap |
+|---|---|---|
+| `tracker.log` | root logger (everything) | 100 MB × 5 |
+| `events.log` | `activity_tracker.events` | 50 MB × 3 |
+| `requests.log` | `activity_tracker.request` (HTTP middleware) | 50 MB × 3 |
+| `errors.log` | WARNING+ from any logger | 50 MB × 3 |
+| `native.log` | `tracker_capture.exe` stderr | 50 MB × 3 |
 
-The file handler uses `RotatingFileHandler(maxBytes=100MB, backupCount=5)`,
-i.e. up to **500 MB** total before old rolls are dropped. Rotation is
-size-triggered, not time-triggered. Override the directory with
-`TRACKER_LOG_DIR` and the level with `TRACKER_LOG_LEVEL` (`DEBUG`,
-`INFO`, `WARNING`, `ERROR`).
+Each line is one JSON object: `{ts, level, logger, message, trace_id?, ...extras}`.
 
-Each JSON record carries: `ts`, `level`, `logger`, `message`, optional
-`trace_id`, plus any keyword extras a caller attached via
-`logger.info(..., extra={...})`. Request access logs include
-`method`, `path`, `status_code`, `duration_ms`.
+Live tail via the UI's **Logs** tab, or:
+
+```cmd
+curl http://127.0.0.1:8000/api/logs/native?tail=100
+```
+
+WebSocket live stream: `ws://127.0.0.1:8000/ws/logs/native`.
 
 ## Metrics (Prometheus)
 
-`GET /metrics` returns the Prometheus exposition format when
-`prometheus-client` is installed and `TRACKER_METRICS_ENABLED=true`
-(the default). Useful series:
+Scrape `http://127.0.0.1:8000/metrics`. Selected series:
 
-| Metric                                  | Type      | Labels  | Meaning                                |
-|-----------------------------------------|-----------|---------|----------------------------------------|
-| `tracker_events_total`                  | counter   | `kind`  | ETW events ingested                    |
-| `tracker_events_dropped_total`          | counter   | -       | Events dropped by slow subscribers     |
-| `tracker_capture_errors_total`          | counter   | -       | Errors raised inside capture pipeline  |
-| `tracker_capture_sessions_live`         | gauge     | -       | Sessions with an attached CaptureService |
-| `tracker_subscribers`                   | gauge     | -       | Live WebSocket subscribers             |
-| `tracker_file_object_cache_size`        | gauge     | -       | FileObject -> path LRU size            |
-| `tracker_tracked_pids_total`            | gauge     | -       | Distinct tracked PIDs across captures  |
-| `tracker_request_duration_seconds`      | histogram | `path`  | HTTP request latency                   |
+| Metric | Type | Labels |
+|---|---|---|
+| `tracker_events_total` | counter | `kind` (file/registry/process/network) |
+| `tracker_events_dropped_total` | counter | — |
+| `tracker_capture_errors_total` | counter | — |
+| `tracker_capture_sessions_live` | gauge | — |
+| `tracker_subscribers` | gauge | — |
+| `tracker_file_object_cache_size` | gauge | `session_name` |
+| `tracker_tracked_pids_total` | gauge | — |
+| `tracker_request_duration_seconds` | histogram | `path` |
 
-Sample alert rules:
+Sample alert (if you ever wire one):
 
 ```yaml
-groups:
-  - name: activity-tracker
-    rules:
-      - alert: TrackerEventLossSpike
-        expr: rate(tracker_events_dropped_total[5m]) > 0
-        for: 5m
-        annotations:
-          summary: "Tracker dropping events (slow WS subscriber)"
-
-      - alert: TrackerCaptureErrors
-        expr: rate(tracker_capture_errors_total[5m]) > 0.1
-        for: 10m
-
-      - alert: TrackerHighFileCache
-        expr: tracker_file_object_cache_size > 200000
-        for: 30m
-        annotations:
-          summary: "FileObject cache larger than expected; possible leak"
+- alert: TrackerHighDropRate
+  expr: rate(tracker_events_dropped_total[5m]) > 10
+  for: 5m
 ```
+
+## Database maintenance
+
+`events.db` is SQLite WAL mode; defaults to repo root.
+
+- **Retention**: writer thread sweeps events older than `TRACKER_DB_RETENTION_DAYS` (default 30) every `TRACKER_DB_RETENTION_CHECK_MINUTES` (default 60). Set days to `0` to disable.
+- **Vacuum**: not automatic. To reclaim disk after large deletions:
+  ```cmd
+  python -c "import sqlite3; sqlite3.connect('events.db').execute('VACUUM').close()"
+  ```
+- **Inspect**:
+  ```cmd
+  sqlite3 events.db ".schema"
+  sqlite3 events.db "SELECT kind, COUNT(*) FROM events GROUP BY kind"
+  ```
 
 ## Troubleshooting
 
-### Every session reports `capture: needs_admin`
-The backend is not running as Administrator. ETW kernel providers cannot
-be started from a standard token. Re-launch via `run-elevated.ps1` or
-re-install the NSSM service under LocalSystem.
+| Symptom | Cause | Fix |
+|---|---|---|
+| Sessions all show `capture: needs_admin` | Backend not running elevated | Use `start.bat` (auto-elevates) or `run-elevated.ps1` |
+| `RuntimeError: Native binary not found` | `tracker_capture.exe` missing | `start.bat` builds it; if VS Build Tools missing, install VS 2022/2026 with C++ workload |
+| No events stream | Target process exited; or kernel ETW session collided | Check `tracker_events_total` metric; restart session |
+| `database is locked` errors | Multiple writer connections | Should not happen — writer owns its own conn; report as bug |
+| `events.db` GBs large | Retention disabled or off | Set `TRACKER_DB_RETENTION_DAYS=7` and restart |
+| Defender quarantines `tracker_capture.exe` | Heuristic match | Run `scripts\setup-defender-exclusion.ps1` once |
+| Port 8000 in use | Stale instance | `stop.bat` or kill PID via `netstat -ano \| findstr :8000` |
 
-### Empty event stream after creating a session
-1. Check `tracker_events_total` — if it's not incrementing, the capture
-   thread isn't producing.
-2. Confirm the target PID still exists (`Get-Process -Id <pid>`); the
-   tracker doesn't follow short-lived children unless they fork from the
-   target.
-3. Look at `tracker.log` for `capture_errors` records.
+## Backup / data export
 
-### Memory growth
-The most likely cause is an unbounded FileObject cache. Watch
-`tracker_file_object_cache_size`; the default cap is
-`TRACKER_FILE_OBJECT_CACHE_SIZE=100000` and entries should evict via LRU
-once full. Restart the backend if the gauge keeps climbing — it indicates
-a regression in the capture layer.
+Per-session export from the UI ("Export CSV" / "Export JSONL" buttons) or:
 
-### `events.db` growing without bound
-There is **no automatic GC** for events at this stage. The DB lives at
-`<repo>/events.db` (overridable via `TRACKER_DB_PATH`). To reclaim space:
-
-```powershell
-# Stop the service first.
-nssm stop ActivityTracker
-
-# Truncate (drop everything; sessions metadata kept):
-sqlite3 events.db "DELETE FROM events; VACUUM;"
-
-# Or delete one session's events:
-sqlite3 events.db "DELETE FROM events WHERE session_id='<uuid>'; VACUUM;"
-
-nssm start ActivityTracker
+```cmd
+curl "http://127.0.0.1:8000/api/sessions/<id>/export?format=jsonl" -o session.jsonl
 ```
 
-Prefer `GET /api/sessions/{id}/export` to back up data before truncating.
-
-## Backup / Data Export
-
-`GET /api/sessions/{session_id}/export?format=jsonl` (or `format=csv`)
-streams the full event history for a session. It supports the same
-filters as `GET /api/sessions/{id}/events` (`kind`, `since`, `until`,
-`q`). Use it for offline analysis, archival, and as a redacted handoff
-format.
-
-Whole-DB backups: copy `events.db` plus the SQLite sidecars (`-wal`,
-`-shm`) while the service is stopped, or use `sqlite3 events.db ".backup
-backup.db"` against a running service. **Treat the DB as sensitive** — see
-the threat model.
+Whole-DB backup: copy `events.db` + `events.db-wal` + `events.db-shm` while the backend is stopped (or use `sqlite3` `.backup` for online).

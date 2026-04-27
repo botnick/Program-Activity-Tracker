@@ -3,99 +3,122 @@
 ## Component diagram
 
 ```
-                                       (Windows kernel)
-                                              |
-                                       ETW kernel providers
-                                              |
-                                              v
-+---------------------------+        +--------------------------+
-| service/capture_service.py|<-------|  pywintrace consumer     |
-|  CaptureService (thread)  |        |  thread (per session)    |
-+-----------+---------------+        +--------------------------+
-            |
-            | callback(payload: dict)            (sync, on capture thread)
-            |  - store.add_event()    ---> SessionStore ring + writer queue
-            |  - asyncio.run_coroutine_threadsafe(hub.publish(...))
-            v
-+---------------------------+        +--------------------------+
-| backend.app.store         |        |  EventHub                |
-|  SessionStore             |  +-----|  asyncio.Queue per WS    |
-|   - in-memory ring buffer |  |     +--------------------------+
-|   - writer thread + queue |  |             ^
-|   - SQLite (WAL)          |  |             | put_nowait
-|     events.db             |  |             | (drops slow consumers)
-+-----------+---------------+  |     +--------------------------+
-            |                  +-----|  WebSocket /ws/sessions/ |
-            |                        |  (FastAPI)               |
-            v                        +--------------------------+
-+---------------------------+
-| backend.app.api_routes    |  HTTP  +--------------------------+
-|  REST + WebSocket router  |<-------|  React UI (ui/dist)      |
-+---------------------------+        +--------------------------+
-            ^
-            | HTTP
-            |
-+---------------------------+
-| mcp/ (Phase 4)            |  - read-only client of the REST API
-+---------------------------+
+                       ┌──────────────────────────────┐
+                       │  target.exe (any process)    │
+                       │  + descendants               │
+                       └──────────────┬───────────────┘
+                                      │  ETW kernel events
+                                      │  (4 manifest providers)
+                                      ▼
+                  ┌─────────────────────────────────────────┐
+                  │  tracker_capture.exe   (C++17, ~600 LOC)│
+                  │   ├─ EtwSession        StartTraceW etc. │
+                  │   ├─ EventConsumer     OpenTrace +       │
+                  │   │                    ProcessTrace      │
+                  │   ├─ TdhParser         TdhGetEventInfo   │
+                  │   ├─ PathTranslator    QueryDosDeviceW   │
+                  │   ├─ PidFilter         + descendants     │
+                  │   └─ ListProcesses     Toolhelp32        │
+                  └────────────────┬────────────────────────┘
+                                   │  NDJSON
+                                   │   1) {"type":"hello","version":"1.0",...}
+                                   │   2) event lines (any order)
+                                   │   3) {"type":"stats",...} every 1s
+                                   ▼
+                  ┌─────────────────────────────────────────┐
+                  │  service/capture_service.py             │
+                  │   thin subprocess wrapper                │
+                  │   - hello-sentinel handshake             │
+                  │   - stdout pump → on_event(payload)      │
+                  │   - stderr pump → activity_tracker.native│
+                  │   - stop() ladder (close stdin → wait    │
+                  │     → terminate → kill)                  │
+                  └────────────────┬────────────────────────┘
+                                   │  on_event(dict)
+                                   ▼
+        ┌──────────────────────────────────────────────────────┐
+        │  backend/app/   (FastAPI)                             │
+        │  ┌──────────────┐   ┌──────────────────────────────┐ │
+        │  │ EventHub     │──▶│ SessionStore                 │ │
+        │  │ asyncio      │   │  ├─ ring buffer  deque(50k)  │ │
+        │  │ subscribers  │   │  ├─ writer thread (batched)  │ │
+        │  └──────┬───────┘   │  ├─ retention sweep (30d)    │ │
+        │         │           │  └─ SQLite WAL (events.db)   │ │
+        │         │           └──────────────────────────────┘ │
+        │         │                                              │
+        │         │           ┌──────────────────────────────┐ │
+        │         │           │ Observability                │ │
+        │         │           │  ├─ JSON formatter           │ │
+        │         │           │  ├─ trace-id contextvar      │ │
+        │         │           │  ├─ 5 log streams (Rotating) │ │
+        │         │           │  ├─ Prometheus /metrics      │ │
+        │         │           │  └─ /api/health (enriched)   │ │
+        │         │           └──────────────────────────────┘ │
+        │         │                                              │
+        │         │           ┌──────────────────────────────┐ │
+        │         │           │ Icons (ctypes)               │ │
+        │         │           │  SHGetFileInfoW + GDI → PNG  │ │
+        │         │           │  SHA1 disk cache             │ │
+        │         │           └──────────────────────────────┘ │
+        └─────────┼──────────────────────────────────────────────┘
+                  │
+        ┌─────────┴────────┐                          ┌──────────────┐
+        │  WebSocket       │                          │  REST        │
+        │  /ws/sessions/   │                          │  /api/*      │
+        │  /ws/logs/       │                          │  /metrics    │
+        └─────┬────────────┘                          └──────┬───────┘
+              │                                              │
+              ▼                                              ▼
+        ┌────────────────────┐                  ┌────────────────────┐
+        │  React UI          │                  │  MCP server         │
+        │  (Vite + Tailwind) │                  │  (stdio FastMCP)    │
+        │   ├─ EventTable    │                  │  14 tools          │
+        │   ├─ LogsTab       │                  │   6 resources      │
+        │   ├─ ProcessPicker │                  │   4 prompts        │
+        │   └─ Drawer        │                  └──────┬─────────────┘
+        └────────────────────┘                          │
+                                                        ▼
+                                                  Claude Code /
+                                                  Claude Desktop
 ```
 
 ## Concurrency model
 
-Three logical execution contexts cooperate inside the backend process:
-
-| Context             | Owner                                     | What it does                                                                    |
-|---------------------|-------------------------------------------|---------------------------------------------------------------------------------|
-| Asyncio loop        | uvicorn / FastAPI                         | HTTP, WebSocket fan-out, lifespan hooks                                         |
-| Capture thread(s)   | `CaptureService.start()` (per session)    | pywintrace consumer + per-event callback that hands off to the store and hub   |
-| Storage writer      | `SessionStore._writer_thread` (1 total)   | Drains a `queue.Queue` and batches `INSERT`s into `events.db`                   |
-
-The write hot path is intentionally **non-blocking**:
-
-1. Capture thread calls `store.add_event(event)`.
-2. `add_event` appends to the in-memory `deque` (live tail) and `put`s on
-   `_write_q`. Neither operation blocks on disk.
-3. Capture thread schedules `hub.publish(...)` via
-   `asyncio.run_coroutine_threadsafe` so the fan-out runs on the asyncio
-   loop's thread.
-4. The writer thread wakes up, batches up to `_WRITER_BATCH_MAX` (1000)
-   events or `_WRITER_BATCH_INTERVAL` (100 ms) of arrivals, then commits
-   them in a single transaction on its own SQLite connection.
-
-WebSocket subscribers each have a private `asyncio.Queue(maxsize=…)`.
-`EventHub.publish` uses `put_nowait`; if a queue fills, the subscriber is
-silently dropped from the set rather than back-pressuring the producer.
-This is the explicit contract: **slow consumers get disconnected, never
-slow down capture**.
+| Thread | Purpose | Notes |
+|---|---|---|
+| Main thread (Python) | uvicorn / asyncio loop | Event ingestion + WS broadcast happen here. |
+| Native consumer thread (in `tracker_capture.exe`) | `ProcessTrace()` blocks; emits events via stdout. | Stops when `ControlTraceW(EVENT_TRACE_CONTROL_STOP)` fires. |
+| Native stats thread (in `tracker_capture.exe`) | Emits `{"type":"stats"}` line every 1 s. | `cv.wait_for` so shutdown is prompt. |
+| Native stdin watcher (in `tracker_capture.exe`) | Reads stdin; EOF triggers clean shutdown. | Lets the parent kill us by closing the pipe. |
+| Python stdout pump | Reads NDJSON from native; calls `on_event`. | Daemon thread. |
+| Python stderr pump | Reads stderr; routes to `activity_tracker.native` logger. | Daemon thread. |
+| SQLite writer thread (Python) | Owns its own SQLite connection; batches inserts. | Independent of FastAPI request threads. Reader requests share a separate locked connection. |
+| FastAPI request threads | Serve REST + WS. | Read events via `store.query_events` (its own connection per call). |
 
 ## Persistence schema
 
-`backend/app/db/schema.sql` (applied idempotently by
-`backend.app.db.migrations.apply_migrations`):
+`backend/app/db/schema.sql`:
 
 ```sql
 CREATE TABLE sessions (
-    session_id      TEXT PRIMARY KEY,
-    exe_path        TEXT NOT NULL,
-    pid             INTEGER NOT NULL,
+    session_id TEXT PRIMARY KEY,
+    exe_path TEXT NOT NULL,
+    pid INTEGER NOT NULL,
     pid_create_time REAL,
-    created_at      TEXT NOT NULL,
-    status          TEXT NOT NULL,
-    capture         TEXT NOT NULL,
-    capture_error   TEXT
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    capture TEXT NOT NULL,
+    capture_error TEXT
 );
 
 CREATE TABLE events (
-    id           TEXT PRIMARY KEY,
-    session_id   TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
-    ts           TEXT NOT NULL,        -- ISO-8601 UTC
-    kind         TEXT NOT NULL,        -- "process" | "file" | "registry" | "network" | ...
-    pid          INTEGER,
-    ppid         INTEGER,
-    path         TEXT,
-    target       TEXT,
-    operation    TEXT,
-    details_json TEXT                  -- stringified JSON; nullable
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    ts TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    pid INTEGER, ppid INTEGER,
+    path TEXT, target TEXT, operation TEXT,
+    details_json TEXT
 );
 
 CREATE INDEX idx_events_session_ts   ON events (session_id, ts);
@@ -103,42 +126,24 @@ CREATE INDEX idx_events_session_kind ON events (session_id, kind);
 CREATE INDEX idx_events_session_pid  ON events (session_id, pid);
 ```
 
-The DB is opened in WAL mode by `apply_migrations`. Writes go through a
-dedicated connection on the writer thread; reads go through a shared
-`check_same_thread=False` connection guarded by `RLock`. Streaming
-exports (`iter_events`) open a private throw-away connection so the
-generator can outlive a single request.
+PRAGMAs at startup: `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`.
 
-## Why a ring buffer in front of SQLite?
+## Why a ring buffer in front of SQLite
 
-Two reasons:
+The asyncio `EventHub` broadcasts the live event to WebSocket subscribers from the in-memory ring (`deque(maxlen=50_000)`) — instant, no disk hit. The writer thread persists the same event asynchronously to SQLite in batches. Reading historical events (`query_events`, `iter_events`, export) goes to SQLite. Live tail uses the ring; restart-survival uses SQLite. This split lets us absorb 1000+ events/sec spikes without blocking either the live broadcast or the writer.
 
-1. **Live tail without disk I/O on the request path.** The WebSocket
-   "replay history then stream" sequence can serve hundreds of recent
-   events without reading from SQLite. Disk reads only happen for the
-   filtered/exported queries.
-2. **Backpressure isolation.** If the writer thread falls behind (slow
-   disk, big batch, fsync stall), the producer keeps appending to the
-   deque. Bounded memory growth is preferred over event loss; the deque
-   has a hard cap (`TRACKER_EVENT_RING_SIZE`, default 50 000), so once
-   full it drops oldest-first — but the *durable* SQLite path keeps
-   accepting writes.
+## Path translation
 
-## Security boundary: localhost-only + CORS allowlist
+Native `path_translator.cpp::BuildDosDeviceMap()` calls `QueryDosDeviceW` for every drive letter A–Z at startup and stores the resulting NT-prefix → DOS-letter pairs sorted longest-first. UNC paths handle `\Device\Mup\…` and `\Device\LanmanRedirector\…`. New volumes mounted after startup are picked up only on the next capture-session start. Nothing is hardcoded.
 
-The default bind is `127.0.0.1:8000`. CORS is locked to
-`http://127.0.0.1:8000`, `http://localhost:8000`, and the Vite dev
-servers on `:5173` (configurable via `TRACKER_CORS_ORIGINS`).
+## Security boundary: localhost + CORS allowlist
 
-There is **no auth.** Anyone with a shell on the host can hit the API.
-We accept this because:
+Single-user, not redistributed. Localhost-bind plus a tight CORS allowlist for `127.0.0.1` / `localhost` is sufficient. There is intentionally no auth — adding a token would create a shared-secret with no benefit for a single-user local tool. If LAN exposure ever becomes a requirement, see `docs/threat-model.md` for the upgrade path (token middleware skeleton already in place via `MCP_TRACKER_TOKEN`).
 
-- The capture data describes activity on this machine and is already
-  visible to any local Administrator.
-- The tool is intended for a single operator on their own workstation.
-- Adding auth without a key-management story leaves a worse footgun
-  (hard-coded shared secret in env file).
+## Why native C++ for ETW and not Python
 
-If exposing the API beyond localhost is ever required, **don't.** Put
-the backend behind a reverse proxy that does TLS + token auth + IP ACLs
-(see `docs/threat-model.md` for the hardening checklist).
+`pywintrace` 0.2.0 (last release 2019) was the original Python ETW path. It was unmaintained, GIL-bound, and limited in keyword expressiveness. Phase 9 replaced it with a native C++17 binary that subscribes directly via Windows ETW APIs (`StartTraceW` / `EnableTraceEx2` / `OpenTraceW` / `ProcessTrace` / TDH). The Python wrapper became a thin subprocess pump (~370 LOC). All path translation, FileObject caching, and PID filtering moved into C++. The hello-sentinel + heartbeat NDJSON protocol catches wire-format drift between the two layers.
+
+## MCP integration
+
+`mcp/` is a separate Python package that talks to the FastAPI HTTP surface only — never imports the tracker's modules. This decouples lifecycles (the tracker runs admin; the MCP server doesn't need to) and matches the standard MCP integration pattern. 14 tools, 6 resources, 4 prompts via `mcp.server.fastmcp.FastMCP` over stdio. See `mcp/README.md`.

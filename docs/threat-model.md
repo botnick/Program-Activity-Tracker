@@ -2,138 +2,83 @@
 
 ## Scope
 
-The Activity Tracker is a **single-user, single-host, localhost-only**
-introspection tool. It elevates to Administrator to subscribe to ETW
-kernel providers, then exposes a small REST + WebSocket API to a UI
-running in the same browser/host. This document records the trust
-boundaries we depend on and the failure modes if they're crossed.
+Single-user, local-only Windows tool. The threat model assumes:
+
+- The user owns and trusts the machine they're running on.
+- The tracker is **not redistributed**; binaries don't leave the user's box.
+- The tracker is **not exposed to LAN** — bind is `127.0.0.1` only.
+
+If any of those change, see "If you ever expose this" at the bottom.
 
 ## Trust boundaries
 
 ```
-+---------------------------------------------------------------+
-|  Host machine (single-user trust domain)                      |
-|                                                               |
-|  +----------------+   ETW (kernel)   +----------------------+ |
-|  | Windows kernel | ---------------> | CaptureService       | |
-|  +----------------+                   |  (Administrator)    | |
-|                                       +----------+-----------+ |
-|                                                  |            |
-|                                                  v            |
-|                                       +-----------------------+|
-|                                       | FastAPI on 127.0.0.1  ||
-|                                       | (no authentication)   ||
-|                                       +----------+-----------+|
-|                                                  ^            |
-|                                                  | localhost  |
-|                                                  |            |
-|                                       +-----------------------+|
-|                                       | Browser / MCP client  ||
-|                                       +-----------------------+|
-+---------------------------------------------------------------+
-                          |
-                       (no traffic
-                       crosses this
-                        boundary)
-                          v
-                +---------------------+
-                | LAN / Internet      |
-                +---------------------+
+   ┌─────────────────┐         ┌──────────────────────────┐
+   │  user (admin)   │ ──UAC──▶│  tracker_capture.exe     │
+   │  on the local   │         │  (kernel ETW consumer)   │
+   │  machine        │         └──────────┬───────────────┘
+   └─────────────────┘                    │ subprocess pipe
+                                          ▼
+                                  ┌──────────────────┐
+                                  │  FastAPI backend │
+                                  │  (admin too)     │
+                                  └────────┬─────────┘
+                                           │ HTTP / WS (loopback)
+                                           ▼
+                                  ┌──────────────────┐
+                                  │ browser, MCP CLI │
+                                  └──────────────────┘
 ```
 
-Inside the host, anything running as the operator is trusted at the
-same level as the API. Outside the host, **no traffic is intended to
-cross**; the bind is `127.0.0.1` and the firewall should not have a
-hole for port 8000.
+Everything inside the trust boundary is the same admin-elevated user.
+There is **no privilege boundary** between the UI and the backend — the user
+calling the API already has the admin token that started the backend.
+
+## What the design defends against
+
+| Threat | Defense |
+|---|---|
+| Target process inspection / tampering | None needed — we never inject, never hook, never modify the target. |
+| Path-traversal via `exe_path` query | `is_safe_exe_path` rejects `..`, non-absolute, UNC-without-drive. |
+| WebSocket overflow disconnects unnoticed | `EventHub.dropped_subscribers` counter + warning log. |
+| Slow consumer back-pressuring capture | Per-subscriber bounded queue; drop subscriber, never block publisher. |
+| PID reuse leaking events to wrong session | `pid_create_time` verified each event. |
+| ETW session orphaned after crash | Native `EtwSession::SweepOrphans()` at startup. |
+| Native binary deadlock | Python `stop()` ladder times out and falls through to `terminate` / `kill`. |
+| Native binary version drift | `{"type":"hello","version":"1.0"}` handshake on first stdout line. |
+| AV/EDR quarantining `tracker_capture.exe` | Optional `scripts/setup-defender-exclusion.ps1`. |
+| `events.db` growing unbounded | 30-day retention sweep in writer thread. |
+| Log files growing unbounded | RotatingFileHandler caps each stream. |
+| MCP server polluting forensic timelines | `emit_event` tool gated behind `MCP_TRACKER_ALLOW_EMIT=1` (default off). |
+| MCP stdio framing corruption | All tracker logs go to stderr; HTTP-only client coupling. |
+| Non-Latin filenames mojibake | TDH parser tries `CP_UTF8` strict, falls back to `CP_ACP`. |
+
+## What the design does NOT defend against (acceptable)
+
+- A malicious local admin user. They already have the keys to the kingdom.
+- A second process running as the same admin user querying `/api/sessions`. There is no auth — by design for the single-user case. If you ever want to lock it down, plumb the `MCP_TRACKER_TOKEN` skeleton end-to-end.
+- Sensitive paths in events. ETW captures whatever the kernel sees. If the target reads `C:\Users\<you>\Documents\secret.txt` we record the path. Treat `events.db` and the `logs/` folder as confidential.
+- A nation-state planting drivers below ETW. Out of scope.
 
 ## Data sensitivity
 
-ETW emits process arguments, file paths, registry keys, and network
-endpoints. None of that is privileged beyond what kernel ETW already
-captures, but the *aggregated history* in `events.db` is sensitive in a
-way no individual record is:
+The `events.db` file and `logs/native.log` may contain:
 
-- File paths often leak credentials in URLs, project names, customer
-  identifiers, and personal data (`C:\Users\<name>\Documents\…`).
-- Registry hits expose installed software, license keys, and per-user
-  tokens.
-- Process command lines occasionally contain secrets passed via flags
-  (badly written installers, CI helpers).
+- Full file paths (potentially in user's home, including secret-shaped names like `wallet.json`).
+- Registry key/value names.
+- Network endpoints the target connects to.
+- Process command lines (where the kernel exposes them).
 
-**Operational rule:** treat `events.db`, `logs/tracker.log`, and any
-exported `.jsonl`/`.csv` like a sysmon archive. Never share without
-redaction. The `GET /api/sessions/{id}/export` endpoint exists partly
-so a redaction step can sit between the raw DB and any handoff.
+Don't share these files casually. Personal use only.
 
-## Attacker model: local user
+## If you ever expose this
 
-The backend has **no authentication**. Any local process on the host
-can hit `127.0.0.1:8000` and:
+If you decide to bind beyond `127.0.0.1` (LAN, VPN, SSH-tunneled to a server):
 
-- List processes (`GET /api/processes`).
-- Start a capture session against any PID the running backend can see
-  (i.e. anything if the backend is Administrator).
-- Read all historical events via `/api/sessions/{id}/events` and
-  `/export`.
-- Subscribe to the live WebSocket stream.
+1. Set `TRACKER_TOKEN=<random>` env var (the env-reading code path is plumbed but currently no middleware enforces it — wire one up).
+2. Tighten `TRACKER_CORS_ORIGINS` to the specific origin you serve the UI from.
+3. Put it behind TLS (a reverse proxy like Caddy with auto-cert is the easiest path).
+4. Consider per-user file ACLs on `events.db`.
+5. Audit `tests/test_observability.py::test_is_safe_exe_path` — make sure the path validator still rejects everything you care about.
 
-This is **by design** — it's a single-user local tool. If you need to
-defend against other local users on a multi-tenant box, do not run this
-backend.
-
-## Attacker model: remote / LAN
-
-If the backend is exposed off-host, the unauthenticated API becomes a
-remote-event-feed and remote-process-listing oracle. Don't expose it.
-If you must, the minimum hardening is:
-
-1. **Bind to localhost only**, then forward through a reverse proxy
-   (nginx, Caddy) that handles TLS + auth.
-2. **Require a bearer token** at the proxy. Generate it once, hand it
-   to operators out-of-band, rotate manually.
-3. **IP allowlist** at the proxy or via Windows Firewall.
-4. **Origin pinning**: tighten `TRACKER_CORS_ORIGINS` to the exact host
-   the UI is served from. Drop the `localhost`/`127.0.0.1` defaults.
-5. **Audit log**: enable proxy access logs and forward them to an
-   immutable store.
-
-None of the above is implemented in this repo today; if a future phase
-needs it, follow the list above rather than bolting auth into FastAPI
-directly.
-
-## ETW provider GUIDs and "extra surface"
-
-The kernel providers we subscribe to (Process, FileIO, Registry,
-TcpIp, Image) are public well-known GUIDs. The data we receive is the
-same data Sysmon, ProcMon, ETL traces, and any kernel-mode tracer can
-see. We do not hook the kernel, install drivers, or escalate beyond
-what `Microsoft-Windows-Kernel-*` already exposes. The Administrator
-requirement is purely so that `EnableTraceEx2` succeeds.
-
-## Defenses we rely on
-
-- **Windows ACLs** on `events.db` and `logs/`. The default LocalSystem
-  install writes them with admin-only ACLs; preserve that if you change
-  the install path.
-- **WAL files** (`events.db-wal`, `events.db-shm`) inherit the same
-  ACLs; they must be backed up alongside the main DB.
-- **`is_safe_exe_path`** in `backend.app.observability` rejects
-  non-absolute / `..` / non-Windows-drive paths from the
-  `exe_path` request field, so an attacker can't make us spawn capture
-  against `\\evilshare\foo.exe` or `/etc/passwd`.
-- **Pinned dependencies** in `pyproject.toml` (FastAPI, uvicorn,
-  pydantic, psutil, pywintrace, prometheus-client) reduce drive-by
-  upgrades. Dependabot opens grouped weekly PRs; review them before
-  merging.
-
-## Known footguns
-
-- Restarting the backend without `flush()` could lose up to
-  `_WRITER_BATCH_INTERVAL` (100 ms) worth of buffered events. The
-  shutdown hook calls `store.shutdown()` to drain.
-- `seed()` in `SessionStore.create()` is gone now, but if it were
-  ever reintroduced, sample events would mix with real captures.
-- Running the dev UI (`vite` on `:5173`) hits a different origin than
-  the backend. The CORS allowlist permits this, but it means the
-  cross-origin browser policy is your only barrier — keep the dev
-  server bound to localhost.
+These are not done by default because they add cognitive load with zero benefit for the documented single-user use case.
