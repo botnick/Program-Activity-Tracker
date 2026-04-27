@@ -170,7 +170,7 @@ echo [INFO] Starting backend on http://127.0.0.1:8000
 echo [INFO] Press Ctrl+C to stop.
 echo.
 
-%PYTHON% -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+%PYTHON% -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --ws-ping-interval 60 --ws-ping-timeout 60
 
 echo.
 echo [INFO] Backend stopped.

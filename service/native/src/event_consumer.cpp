@@ -371,15 +371,25 @@ void EventConsumer::HandleEvent(PEVENT_RECORD record) {
 
     if (kind_w == L"file") {
         std::wstring path;
+        unsigned long long fo = 0;
         const std::wstring* fname = GetString(ev, L"FileName");
         if (!fname) fname = GetString(ev, L"OpenPath");
         if (!fname) fname = GetString(ev, L"FilePath");
         if (fname && !fname->empty()) {
             path = translator_.Translate(*fname);
-        } else {
-            unsigned long long fo = 0;
+        }
+        if (path.empty()) {
             if (!GetUInt(ev, L"FileObject", fo)) GetUInt(ev, L"FileKey", fo);
             if (fo != 0) ResolveFileObject(fo, path);
+        }
+        // Last-resort fallback: when both FileName and FileObject cache miss,
+        // show the kernel handle pointer so the user can correlate events on
+        // the same file even if it was opened before tracking started.
+        if (path.empty() && fo != 0) {
+            wchar_t buf[40];
+            std::swprintf(buf, sizeof(buf) / sizeof(buf[0]),
+                          L"[handle 0x%llx]", fo);
+            path = buf;
         }
         root.emplace_back("ppid", JsonValue());
         root.emplace_back("path", path.empty() ? JsonValue()

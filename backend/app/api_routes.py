@@ -395,11 +395,26 @@ async def stream_session(websocket: WebSocket, session_id: str) -> None:
     await websocket.accept()
     queue = hub.subscribe(session_id)
     try:
+        # Replay buffered history. default=str keeps non-JSON-native fields
+        # (datetimes, bytes converted upstream) from killing the connection.
         for event in store.events(session_id):
-            await websocket.send_text(json.dumps(asdict(event)))
+            try:
+                await websocket.send_text(json.dumps(asdict(event), default=str))
+            except (WebSocketDisconnect, ConnectionError, RuntimeError):
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ws replay send failed: %s", exc)
+                continue
+        # Tail new events.
         while True:
             payload = await queue.get()
-            await websocket.send_text(json.dumps(payload))
+            try:
+                await websocket.send_text(json.dumps(payload, default=str))
+            except (WebSocketDisconnect, ConnectionError, RuntimeError):
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ws tail send failed: %s", exc)
+                continue
     except WebSocketDisconnect:
         pass
     finally:
