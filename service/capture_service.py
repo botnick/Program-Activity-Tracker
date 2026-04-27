@@ -21,35 +21,88 @@ limited token.
 from __future__ import annotations
 
 import ctypes
+import json
 import logging
+import os
 import socket
 import struct
+import subprocess
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import psutil
-from etw import ETW, GUID, ProviderInfo
+
+try:  # noqa: SIM105
+    from etw import ETW, GUID, ProviderInfo  # type: ignore[import-not-found]
+except Exception:  # noqa: BLE001 — pywintrace optional when running native engine.
+    ETW = None  # type: ignore[assignment]
+    GUID = None  # type: ignore[assignment]
+    ProviderInfo = None  # type: ignore[assignment]
 
 from service.etw_cleanup import sweep_orphan_sessions
 
 logger = logging.getLogger(__name__)
 
 
-PROVIDER_FILE = GUID("{EDD08927-9CC4-4E65-B970-C2560FB5C289}")
-PROVIDER_REGISTRY = GUID("{70EB4F03-C1DE-4F73-A051-33D13D5413BD}")
-PROVIDER_PROCESS = GUID("{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}")
-PROVIDER_NETWORK = GUID("{7DD42A49-5329-4832-8DFD-43D979153A88}")
+# Repo root: .../kuy/  (parents[1] from .../kuy/service/capture_service.py)
+_BASE_DIR = Path(__file__).resolve().parents[1]
+
+
+def _native_binary_path() -> Path | None:
+    """Return the first existing ``tracker_capture.exe`` candidate, or ``None``."""
+    candidates = [
+        _BASE_DIR / "service" / "native" / "build" / "Release" / "tracker_capture.exe",
+        _BASE_DIR / "service" / "native" / "build" / "tracker_capture.exe",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def _resolve_engine_choice() -> str:
+    """Pick the requested engine. Env var beats settings.
+
+    Returns ``"auto"``, ``"native"``, or ``"python"``.
+    """
+    override = os.getenv("TRACKER_CAPTURE_ENGINE")
+    if override:
+        return override.lower()
+    try:
+        from backend.app.config import get_settings
+
+        return str(get_settings().capture_engine).lower()
+    except Exception:  # noqa: BLE001
+        return "auto"
+
+
+_PROVIDER_FILE_STR = "{EDD08927-9CC4-4E65-B970-C2560FB5C289}"
+_PROVIDER_REGISTRY_STR = "{70EB4F03-C1DE-4F73-A051-33D13D5413BD}"
+_PROVIDER_PROCESS_STR = "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}"
+_PROVIDER_NETWORK_STR = "{7DD42A49-5329-4832-8DFD-43D979153A88}"
+
+if GUID is not None:
+    PROVIDER_FILE = GUID(_PROVIDER_FILE_STR)
+    PROVIDER_REGISTRY = GUID(_PROVIDER_REGISTRY_STR)
+    PROVIDER_PROCESS = GUID(_PROVIDER_PROCESS_STR)
+    PROVIDER_NETWORK = GUID(_PROVIDER_NETWORK_STR)
+else:  # pywintrace unavailable — only the native backend will work.
+    PROVIDER_FILE = _PROVIDER_FILE_STR  # type: ignore[assignment]
+    PROVIDER_REGISTRY = _PROVIDER_REGISTRY_STR  # type: ignore[assignment]
+    PROVIDER_PROCESS = _PROVIDER_PROCESS_STR  # type: ignore[assignment]
+    PROVIDER_NETWORK = _PROVIDER_NETWORK_STR  # type: ignore[assignment]
 
 PROVIDER_KIND: dict[str, str] = {
-    str(PROVIDER_FILE).lower(): "file",
-    str(PROVIDER_REGISTRY).lower(): "registry",
-    str(PROVIDER_PROCESS).lower(): "process",
-    str(PROVIDER_NETWORK).lower(): "network",
+    _PROVIDER_FILE_STR.lower(): "file",
+    _PROVIDER_REGISTRY_STR.lower(): "registry",
+    _PROVIDER_PROCESS_STR.lower(): "process",
+    _PROVIDER_NETWORK_STR.lower(): "network",
 }
 
 
@@ -242,10 +295,43 @@ class CaptureService:
         # Backpressure / observability.
         self._dropped_events: int = 0
         self._last_event_at: str | None = None
+        # Backend selection: filled in by start().
+        self._engine: str = "none"
+        # Native subprocess (only populated when engine == "native").
+        self._native_proc: subprocess.Popen[bytes] | None = None
+        self._native_threads: list[threading.Thread] = []
 
     # ---- lifecycle -------------------------------------------------------
 
     def start(self) -> None:
+        """Pick a backend (native > pywintrace) and start streaming events."""
+        engine_choice = _resolve_engine_choice()
+        binary = _native_binary_path()
+
+        if engine_choice == "python":
+            self._start_pywintrace()
+            return
+
+        if engine_choice == "native" and binary is None:
+            raise RuntimeError(
+                "Native capture binary not found at service/native/build. "
+                "Build it (see service/native/README.md) or set "
+                "TRACKER_CAPTURE_ENGINE=python to fall back to pywintrace."
+            )
+
+        if binary is not None and engine_choice in ("auto", "native"):
+            self._start_native(binary)
+            return
+
+        # auto + no binary -> fall back to legacy.
+        self._start_pywintrace()
+
+    def _start_pywintrace(self) -> None:
+        if ETW is None or ProviderInfo is None:
+            raise RuntimeError(
+                "pywintrace backend requested but the 'etw' package is not "
+                "installed. Build the native engine or `pip install pywintrace`."
+            )
         if not is_admin():
             raise PermissionError(
                 "ETW capture requires Administrator. Restart the backend in an elevated shell."
@@ -290,24 +376,153 @@ class CaptureService:
             ignore_exists_error=True,
         )
         self._etw.start()
+        self._engine = "python"
         logger.info(
-            "ETW capture started (session=%s, target_pid=%d, descendants=%d)",
+            "ETW capture started [pywintrace] (session=%s, target_pid=%d, descendants=%d)",
             self._session_name,
             self.target.pid,
             len(self._tracked_pids),
         )
 
+    def _start_native(self, binary: Path) -> None:
+        """Spawn ``tracker_capture.exe`` and bridge its NDJSON output."""
+        argv = [str(binary), "--pid", str(self.target.pid),
+                "--session-name", self._session_name]
+        if self.target.pid_create_time is not None:
+            # The Python target stores create_time as POSIX seconds; convert
+            # to integer milliseconds for the C++ side.
+            ms = int(round(float(self.target.pid_create_time) * 1000.0))
+            argv.extend(["--pid-create-time", str(ms)])
+
+        try:
+            self._native_proc = subprocess.Popen(  # noqa: S603 — argv is fully controlled.
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+            )
+        except OSError as exc:
+            raise RuntimeError(f"failed to spawn native capture: {exc}") from exc
+
+        self._engine = "native"
+        self._seed_descendants_from_psutil()
+
+        out_thread = threading.Thread(
+            target=self._native_stdout_pump,
+            name="native-capture-stdout",
+            daemon=True,
+        )
+        err_thread = threading.Thread(
+            target=self._native_stderr_pump,
+            name="native-capture-stderr",
+            daemon=True,
+        )
+        out_thread.start()
+        err_thread.start()
+        self._native_threads = [out_thread, err_thread]
+
+        logger.info(
+            "ETW capture started [native] (binary=%s, session=%s, target_pid=%d)",
+            binary,
+            self._session_name,
+            self.target.pid,
+        )
+
+    def _native_stdout_pump(self) -> None:
+        """Read NDJSON from ``tracker_capture.exe`` and dispatch to ``on_event``."""
+        proc = self._native_proc
+        if proc is None or proc.stdout is None:
+            return
+        try:
+            for raw in proc.stdout:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except (ValueError, json.JSONDecodeError) as exc:
+                    self._error_count += 1
+                    now = time.monotonic()
+                    if now - self._last_error_log >= 5.0:
+                        self._last_error_log = now
+                        logger.warning("native: bad JSON line: %s (%s)", line[:200], exc)
+                    continue
+                if "timestamp" not in payload and "ts" in payload:
+                    payload["timestamp"] = payload.get("ts")
+                if isinstance(payload, dict):
+                    self._last_event_at = str(payload.get("ts") or payload.get("timestamp") or "")
+                    try:
+                        self.on_event(payload)
+                    except Exception as exc:  # noqa: BLE001
+                        self._error_count += 1
+                        now = time.monotonic()
+                        if now - self._last_error_log >= 5.0:
+                            self._last_error_log = now
+                            logger.warning("native: on_event raised: %s", exc, exc_info=True)
+        finally:
+            try:
+                proc.stdout.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _native_stderr_pump(self) -> None:
+        proc = self._native_proc
+        if proc is None or proc.stderr is None:
+            return
+        try:
+            for raw in proc.stderr:
+                line = raw.decode("utf-8", errors="replace").rstrip()
+                if not line:
+                    continue
+                # Lines tagged "[info]" by the native binary are routine.
+                if line.startswith("[info]"):
+                    logger.info("native: %s", line[len("[info]"):].lstrip())
+                else:
+                    logger.warning("native: %s", line)
+        finally:
+            try:
+                proc.stderr.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     def stop(self) -> None:
         if self._stopped:
             return
         self._stopped = True
-        if self._etw is not None:
+        if self._engine == "native":
+            self._stop_native()
+        elif self._etw is not None:
             try:
                 self._etw.stop()
             except Exception as exc:  # noqa: BLE001
                 logger.warning("ETW stop failed: %s", exc)
             self._etw = None
         logger.info("ETW capture stopped (session=%s)", self._session_name)
+
+    def _stop_native(self) -> None:
+        proc = self._native_proc
+        if proc is None:
+            return
+        # Closing stdin signals graceful shutdown to the native binary.
+        try:
+            if proc.stdin is not None:
+                proc.stdin.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.terminate()
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("native: terminate failed: %s", exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("native: wait failed: %s", exc)
+        self._native_proc = None
 
     # ---- helpers ---------------------------------------------------------
 
@@ -425,6 +640,7 @@ class CaptureService:
             "errors": self._error_count,
             "dropped": self._dropped_events,
             "last_event_at": self._last_event_at,
+            "engine": self._engine,
         }
 
     def _update_pid_set(self, event_id: int, data: dict[str, Any]) -> None:

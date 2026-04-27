@@ -220,6 +220,7 @@ def test_stats_shape() -> None:
         "errors",
         "dropped",
         "last_event_at",
+        "engine",
     }
 
 

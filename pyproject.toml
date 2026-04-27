@@ -46,6 +46,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 # Pre-existing patterns owned by other agents; tightened gradually.
 "backend/app/api_routes.py" = ["SIM114", "SIM105"]
 "backend/app/store.py" = ["SIM105"]
+"service/capture_service.py" = ["SIM105"]
 "tests/test_capture.py" = ["F401", "I001"]
 
 [tool.mypy]
