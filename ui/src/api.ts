@@ -1,3 +1,5 @@
+import type { ActivityEvent, EventQueryParams, Session } from './types';
+
 export const api = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
@@ -8,3 +10,34 @@ export const api = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   }
   return response.json() as Promise<T>;
 };
+
+export type EventsResponse = { items: ActivityEvent[] };
+
+export const queryEvents = async (
+  sessionId: string,
+  params: EventQueryParams,
+): Promise<EventsResponse> => {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  });
+  return api<EventsResponse>(`/api/sessions/${sessionId}/events?${qs.toString()}`);
+};
+
+export const exportUrl = (
+  sessionId: string,
+  format: 'csv' | 'jsonl',
+  filters: Record<string, string> = {},
+) => {
+  const qs = new URLSearchParams({ format, ...filters }).toString();
+  return `/api/sessions/${sessionId}/export?${qs}`;
+};
+
+export const exportSession = (
+  sessionId: string,
+  format: 'csv' | 'jsonl',
+  filters: Record<string, string> = {},
+) => exportUrl(sessionId, format, filters);
+
+export const fetchSession = (sessionId: string): Promise<Session> =>
+  api<Session>(`/api/sessions/${sessionId}`);

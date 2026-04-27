@@ -5,6 +5,8 @@ import type { ActivityEvent } from '../types';
 type Props = {
   events: ActivityEvent[];
   autoScroll: boolean;
+  onSelectEvent?: (event: ActivityEvent) => void;
+  selectedId?: string | null;
 };
 
 const ROW_HEIGHT = 32;
@@ -17,7 +19,7 @@ function kindClass(kind: string): string {
   return 'bg-slate-500/10 text-slate-300';
 }
 
-export function EventTable({ events, autoScroll }: Props) {
+export function EventTable({ events, autoScroll, onSelectEvent, selectedId }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
 
   const virtualizer = useVirtualizer({
@@ -62,10 +64,14 @@ export function EventTable({ events, autoScroll }: Props) {
             {items.map((vi) => {
               const event = events[vi.index];
               if (!event) return null;
+              const isSelected = selectedId === event.id;
               return (
                 <div
                   key={vi.key}
-                  className="grid grid-cols-[110px_80px_120px_80px_1fr_1fr] border-t border-slate-800"
+                  onClick={() => onSelectEvent?.(event)}
+                  className={`grid cursor-pointer grid-cols-[110px_80px_120px_80px_1fr_1fr] border-t border-slate-800 transition-colors ${
+                    isSelected ? 'bg-cyan-500/10' : 'hover:bg-slate-800/40'
+                  }`}
                   style={{
                     position: 'absolute',
                     top: 0,

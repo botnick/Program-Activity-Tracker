@@ -12,24 +12,26 @@
     "format": "prettier --write src"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.10.9",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@tanstack/react-virtual": "^3.10.9"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@typescript-eslint/eslint-plugin": "^8.20.0",
+    "@typescript-eslint/parser": "^8.20.0",
     "@vitejs/plugin-react": "^4.3.4",
-    "typescript": "^5.7.3",
-    "vite": "^6.0.11",
-    "tailwindcss": "^3.4.17",
-    "postcss": "^8.4.49",
     "autoprefixer": "^10.4.20",
     "eslint": "^9.17.0",
-    "prettier": "^3.4.2",
-    "@typescript-eslint/parser": "^8.20.0",
-    "@typescript-eslint/eslint-plugin": "^8.20.0",
     "eslint-plugin-react-hooks": "^5.1.0",
-    "eslint-plugin-react-refresh": "^0.4.16"
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "globals": "^17.5.0",
+    "postcss": "^8.4.49",
+    "prettier": "^3.4.2",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11"
   }
 }

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "activity-tracker-mcp"
+version = "0.1.0"
+description = "MCP server exposing the Activity Tracker to Claude Code / Claude Desktop"
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = [
+    "mcp[cli]>=1.2",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "uvicorn>=0.34",
+    "fastapi>=0.115",
+]
+
+[project.scripts]
+mcp-tracker = "mcp_tracker.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -37,6 +37,26 @@ export type ProcessList = {
 export const KINDS = ['file', 'registry', 'process', 'network'] as const;
 export type Kind = (typeof KINDS)[number];
 
+export type EventQueryParams = {
+  kind?: string;
+  pid?: number;
+  since?: string;
+  until?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type ToastKind = 'info' | 'error' | 'success';
+
+export type ToastMessage = {
+  id: string;
+  kind: ToastKind;
+  message: string;
+  ttl?: number;
+  action?: { label: string; run: () => void };
+};
+
 export function captureBadge(capture: string): { label: string; cls: string } {
   if (capture === 'live')
     return { label: 'live', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40' };

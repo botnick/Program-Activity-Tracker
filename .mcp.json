@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "activity-tracker": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "mcp_tracker"],
+      "env": {
+        "MCP_TRACKER_URL": "http://127.0.0.1:8000"
+      }
+    }
+  }
+}
