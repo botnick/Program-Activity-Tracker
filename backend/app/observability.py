@@ -462,15 +462,18 @@ def _subscriber_count() -> int:
     subs = getattr(_hub, "_subscribers", None)
     if not subs:
         return 0
-    total = 0
+    # Snapshot the values to avoid "dict changed size during iteration"
+    # when subscribe/unsubscribe runs concurrently with /metrics or /api/health.
     try:
-        for queues in subs.values():
-            try:
-                total += len(queues)
-            except TypeError:
-                continue
+        snapshot = list(subs.values())
     except Exception:  # noqa: BLE001
-        return total
+        return 0
+    total = 0
+    for queues in snapshot:
+        try:
+            total += len(queues)
+        except TypeError:
+            continue
     return total
 
 

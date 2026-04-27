@@ -25,20 +25,26 @@ echo  Admin: YES  (ETW capture enabled)
 echo ============================================================
 echo.
 
-REM --- check Python ----------------------------------------------------------
-where python >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Python is not on PATH. Install Python 3.10+ from https://python.org
+REM --- check Python (try python, then py.exe launcher) ----------------------
+set PYTHON=
+where python >nul 2>&1 && set PYTHON=python
+if not defined PYTHON (
+    where py >nul 2>&1 && set PYTHON=py -3
+)
+if not defined PYTHON (
+    echo [ERROR] Python 3.10+ not found.
+    echo         Install from https://www.python.org/downloads/  (tick "Add to PATH")
+    echo         or from the Microsoft Store.
     pause
     exit /b 1
 )
 
 REM --- ensure backend deps installed -----------------------------------------
-python -c "import fastapi, psutil, etw" >nul 2>&1
+%PYTHON% -c "import fastapi, psutil, etw" >nul 2>&1
 if %errorlevel% neq 0 (
     echo [INFO] Installing backend dependencies (one-time)...
-    python -m pip install --upgrade pip
-    python -m pip install -e ".[dev]"
+    %PYTHON% -m pip install --upgrade pip
+    %PYTHON% -m pip install -e ".[dev]"
     if %errorlevel% neq 0 (
         echo [ERROR] pip install failed.
         pause
@@ -70,7 +76,7 @@ echo [INFO] Starting backend on http://127.0.0.1:8000
 echo [INFO] Press Ctrl+C to stop.
 echo.
 
-python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+%PYTHON% -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 
 echo.
 echo [INFO] Backend stopped.

@@ -543,6 +543,9 @@ class EventHub:
     def __init__(self) -> None:
         self._subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = defaultdict(set)
         self._sub_q_size: int = get_settings().subscriber_queue_size
+        # Count of subscribers disconnected because their queue overflowed.
+        # Surfaced via /api/health and /metrics so silent drops are visible.
+        self.dropped_subscribers: int = 0
 
     def subscribe(self, session_id: str) -> asyncio.Queue[dict[str, Any]]:
         queue_: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self._sub_q_size)
@@ -559,6 +562,13 @@ class EventHub:
                 queue_.put_nowait(payload)
             except asyncio.QueueFull:
                 dead.append(queue_)
+        if dead:
+            self.dropped_subscribers += len(dead)
+            logger.warning(
+                "EventHub: dropped %d slow subscriber(s) on session %s "
+                "(total=%d). Increase TRACKER_SUBSCRIBER_QUEUE_SIZE if this recurs.",
+                len(dead), session_id, self.dropped_subscribers,
+            )
         for queue_ in dead:
             self._subscribers[session_id].discard(queue_)
 

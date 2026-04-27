@@ -287,7 +287,10 @@ class CaptureService:
         self._file_paths_lock = threading.Lock()
         self._pid_create_times: dict[int, float] = {}
         self._pid_create_lock = threading.Lock()
-        self._session_name = f"ActivityTracker-{target.pid}-{int(time.time())}"
+        # uuid suffix prevents collisions when two captures of the same pid
+        # start within the same second.
+        import uuid as _uuid
+        self._session_name = f"ActivityTracker-{target.pid}-{_uuid.uuid4().hex[:8]}"
         self._stopped = False
         # Error sample-rate state.
         self._last_error_log: float = 0.0
