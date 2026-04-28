@@ -323,12 +323,12 @@ class LogView(ttk.Frame):
     """Polished log viewer: ANSI-coloured Text widget with toolbar."""
 
     PALETTE = {
-        "bg": "#0e1116",
+        "bg": "#0d1117",
         "bg_alt": "#161b22",
-        "fg": "#d6deeb",
+        "fg": "#e6edf3",
         "fg_muted": "#8b949e",
         "accent": "#58a6ff",
-        "border": "#30363d",
+        "border": "#21262d",
         "search_hi": "#3a4d2c",
         "select": "#264f78",
         # ANSI palette (close to VS Code Dark+)
@@ -775,9 +775,8 @@ class Sparkline(tk.Canvas):
         super().__init__(
             parent,
             height=height,
-            bg="#0e1116",
-            highlightthickness=1,
-            highlightbackground="#21262d",
+            bg="#0d1117",
+            highlightthickness=0,
         )
         self._color = color
         self._fill = fill
@@ -801,11 +800,20 @@ class Sparkline(tk.Canvas):
         self.delete("all")
         w = max(1, self.winfo_width())
         h = max(1, self.winfo_height())
+
+        # Subtle horizontal grid (3 thin lines)
+        grid_color = "#1c2128"
+        for q in (0.25, 0.5, 0.75):
+            y = int(h * q)
+            self.create_line(0, y, w, y, fill=grid_color, width=1)
+
         if not self._values:
             self.create_text(
-                w - 6, 6, anchor="ne", text="—", fill="#8b949e", font=("Cascadia Mono", 9)
+                w - 8, 8, anchor="ne", text="—",
+                fill="#6e7681", font=("Segoe UI Variable", 9),
             )
             return
+
         max_v = self._max_value if self._max_value is not None else max(self._values)
         if max_v <= 0:
             max_v = 1.0
@@ -815,46 +823,72 @@ class Sparkline(tk.Canvas):
         pts: list[float] = []
         for i, v in enumerate(self._values):
             x = (i + offset) * step
-            y = h - (v / max_v) * (h - 6) - 3
+            y = h - (v / max_v) * (h - 10) - 5
             pts.extend([x, y])
+
+        # Faux gradient fill: 3 stacked stippled polygons of decreasing alpha
+        # (Tk stipple is black-and-white; we approximate alpha by mixing the
+        # accent colour with the background at increasing strength).
         if self._fill and len(pts) >= 4:
             poly = list(pts) + [pts[-2], h, pts[0], h]
-            try:
-                self.create_polygon(poly, fill=self._color, outline="", stipple="gray25")
-            except tk.TclError:
-                pass
+            for stipple, fill in (
+                ("gray12", self._color),
+                ("gray25", self._color),
+            ):
+                try:
+                    self.create_polygon(poly, fill=fill, outline="", stipple=stipple)
+                except tk.TclError:
+                    break
+
+        # Foreground line — slightly thicker for visibility on the gradient
         if len(pts) >= 4:
-            self.create_line(pts, fill=self._color, width=2)
+            self.create_line(pts, fill=self._color, width=2, smooth=True, splinesteps=12)
+            # Highlight dot at the tail
+            tx, ty = pts[-2], pts[-1]
+            self.create_oval(tx - 3, ty - 3, tx + 3, ty + 3, fill=self._color, outline="")
+
+        # Current value, top-right.
         last = self._values[-1]
+        self.create_rectangle(w - 70, 4, w - 4, 22, fill="#0d1117", outline="")
         self.create_text(
-            w - 6,
-            6,
-            anchor="ne",
+            w - 8, 13, anchor="e",
             text=f"{last:,.1f}",
-            fill="#d6deeb",
-            font=("Cascadia Mono", 9),
+            fill="#e6edf3", font=("Segoe UI Variable", 10, "bold"),
         )
 
 
-class KpiCard(ttk.Frame):
-    def __init__(self, parent: tk.Widget, label: str) -> None:
-        super().__init__(parent, style="Card.TFrame", padding=(10, 8))
-        self._lbl = ttk.Label(
-            self, text=label.upper(), style="Card.TLabel", font=("Segoe UI", 8)
+class KpiCard(tk.Frame):
+    """KPI card with a subtle left accent strip."""
+
+    BG = "#161b22"
+    BG_STRIP = "#21262d"
+    LABEL = "#8b949e"
+    VALUE = "#f0f6fc"
+
+    def __init__(self, parent: tk.Widget, label: str, accent: str | None = None) -> None:
+        super().__init__(parent, background=self.BG, highlightthickness=0, bd=0)
+        # Left accent strip — 3 px coloured bar.
+        strip = tk.Frame(self, background=accent or self.BG_STRIP, width=3)
+        strip.pack(side=tk.LEFT, fill=tk.Y)
+        body = tk.Frame(self, background=self.BG)
+        body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(12, 12), pady=(10, 10))
+        self._lbl = tk.Label(
+            body, text=label.upper(),
+            background=self.BG, foreground=self.LABEL,
+            font=("Segoe UI Variable", 8),
+            anchor="w",
         )
-        self._lbl.pack(anchor="w")
-        self._val = ttk.Label(
-            self,
-            text="—",
-            style="CardValue.TLabel",
-            font=("Cascadia Mono", 18, "bold"),
+        self._lbl.pack(fill=tk.X)
+        self._val = tk.Label(
+            body, text="—",
+            background=self.BG, foreground=self.VALUE,
+            font=("Segoe UI Variable", 20, "bold"),
+            anchor="w",
         )
-        self._val.pack(anchor="w", pady=(4, 0))
+        self._val.pack(fill=tk.X, pady=(2, 0))
 
     def set_value(self, text: str, color: str | None = None) -> None:
-        self._val.configure(text=text)
-        if color:
-            self._val.configure(foreground=color)
+        self._val.configure(text=text, foreground=color or self.VALUE)
 
 
 class CaptureMonitor(ttk.Frame):
@@ -875,62 +909,69 @@ class CaptureMonitor(ttk.Frame):
         self._build()
 
     def _build(self) -> None:
-        # Top status bar
+        # Top status bar — generous padding, status dot + heading on left,
+        # uptime / session pills middle, action buttons on right.
         top = ttk.Frame(self, style="Header.TFrame")
         top.pack(side=tk.TOP, fill=tk.X)
 
+        left = ttk.Frame(top, style="Header.TFrame")
+        left.pack(side=tk.LEFT, padx=(16, 8), pady=(14, 14))
+
         self._status_dot = tk.Canvas(
-            top, width=14, height=14, bg="#161b22", highlightthickness=0
+            left, width=12, height=12, bg="#0d1117", highlightthickness=0
         )
         self._status_circle = self._status_dot.create_oval(
-            2, 2, 12, 12, fill="#6e7681", outline=""
+            1, 1, 11, 11, fill="#6e7681", outline=""
         )
-        self._status_dot.pack(side=tk.LEFT, padx=(12, 6), pady=10)
+        self._status_dot.pack(side=tk.LEFT, padx=(0, 10))
 
         self._status_lbl = ttk.Label(
-            top, text="tracker_capture.exe — Stopped", style="Status.TLabel"
+            left, text="tracker_capture.exe — Stopped", style="Status.TLabel"
         )
         self._status_lbl.pack(side=tk.LEFT)
 
-        ttk.Separator(top, orient=tk.VERTICAL).pack(
-            side=tk.LEFT, fill=tk.Y, padx=8, pady=6
-        )
-        self._uptime_lbl = ttk.Label(top, text="Uptime —", style="Pill.TLabel")
-        self._uptime_lbl.pack(side=tk.LEFT, padx=4, pady=8)
+        # Pills row (uptime + session) — separator + spaced pills
+        mid = ttk.Frame(top, style="Header.TFrame")
+        mid.pack(side=tk.LEFT, padx=8, pady=(14, 14))
+        self._uptime_lbl = ttk.Label(mid, text="Uptime —", style="Pill.TLabel")
+        self._uptime_lbl.pack(side=tk.LEFT, padx=4)
+        self._session_lbl = ttk.Label(mid, text="Session —", style="Pill.TLabel")
+        self._session_lbl.pack(side=tk.LEFT, padx=4)
 
-        ttk.Separator(top, orient=tk.VERTICAL).pack(
-            side=tk.LEFT, fill=tk.Y, padx=8, pady=6
+        # Right-side actions
+        right = ttk.Frame(top, style="Header.TFrame")
+        right.pack(side=tk.RIGHT, padx=(8, 16), pady=(11, 11))
+        ttk.Button(right, text="Restart capture", command=self._on_restart_capture).pack(
+            side=tk.LEFT, padx=4
         )
-        self._session_lbl = ttk.Label(top, text="Session —", style="Pill.TLabel")
-        self._session_lbl.pack(side=tk.LEFT, padx=4, pady=8)
-
-        ttk.Button(top, text="↻  Restart capture", command=self._on_restart_capture).pack(
-            side=tk.RIGHT, padx=4, pady=8
+        ttk.Button(right, text="Kill", command=self._on_kill_capture, style="Danger.TButton").pack(
+            side=tk.LEFT, padx=4
         )
-        ttk.Button(top, text="■  Kill", command=self._on_kill_capture).pack(
-            side=tk.RIGHT, padx=4, pady=8
-        )
-        ttk.Button(top, text="📝  native.log", command=self._on_open_native_log).pack(
-            side=tk.RIGHT, padx=4, pady=8
+        ttk.Button(right, text="Open native.log", command=self._on_open_native_log).pack(
+            side=tk.LEFT, padx=4
         )
 
-        # KPI grid (8 cards in 2 rows)
+        # Subtle separator below the header
+        ttk.Separator(self, orient=tk.HORIZONTAL).pack(side=tk.TOP, fill=tk.X)
+
+        # KPI grid — 8 cards in 2 rows of 4. Each gets a subtle left accent
+        # strip in a colour that hints at what the metric measures.
         kpi_frame = ttk.Frame(self)
-        kpi_frame.pack(fill=tk.X, padx=12, pady=(10, 6))
-        names = [
-            "events/sec",
-            "total events",
-            "tracked pids",
-            "cache size",
-            "cpu %",
-            "ram (mb)",
-            "threads",
-            "handles",
+        kpi_frame.pack(fill=tk.X, padx=16, pady=(14, 8))
+        cards = [
+            ("events/sec",   "#79c0ff"),
+            ("total events", "#79c0ff"),
+            ("tracked pids", "#7ee787"),
+            ("cache size",   "#d2a8ff"),
+            ("cpu %",        "#f1e05a"),
+            ("ram (mb)",     "#d2a8ff"),
+            ("threads",      "#8b949e"),
+            ("handles",      "#8b949e"),
         ]
         self._kpis: dict[str, KpiCard] = {}
-        for i, name in enumerate(names):
-            card = KpiCard(kpi_frame, name)
-            card.grid(row=i // 4, column=i % 4, sticky="nsew", padx=4, pady=4)
+        for i, (name, accent) in enumerate(cards):
+            card = KpiCard(kpi_frame, name, accent=accent)
+            card.grid(row=i // 4, column=i % 4, sticky="nsew", padx=5, pady=5)
             self._kpis[name] = card
         for i in range(4):
             kpi_frame.columnconfigure(i, weight=1)
@@ -1026,40 +1067,46 @@ class CaptureMonitor(ttk.Frame):
         c.delete("all")
         if not self._last_by_kind:
             c.create_text(
-                12, 14, anchor="w", text="(no events)", fill="#8b949e",
-                font=("Cascadia Mono", 9),
+                14, 18, anchor="w", text="No events yet — start a session to see traffic by kind.",
+                fill="#6e7681", font=("Segoe UI Variable", 9),
             )
             return
         w = max(1, c.winfo_width())
         h = max(1, c.winfo_height())
         kinds = sorted(self._last_by_kind.items(), key=lambda x: -x[1])
         max_v = max(v for _, v in kinds) or 1
-        bar_h = (h - 8) / max(1, len(kinds))
-        label_w = 90
-        right_pad = 90
+        bar_h = (h - 12) / max(1, len(kinds))
+        label_w = 100
+        right_pad = 110
+        track_color = "#1c2128"
         for i, (kind, v) in enumerate(kinds):
-            y = 4 + i * bar_h
+            y = 6 + i * bar_h
             color = KIND_COLORS.get(kind.lower(), KIND_COLORS["other"])
             ratio = v / max_v
-            bar_w = max(0.0, (w - label_w - right_pad) * ratio)
-            c.create_text(
-                10,
-                y + bar_h / 2,
-                anchor="w",
-                text=kind,
-                fill="#d6deeb",
-                font=("Cascadia Mono", 10, "bold"),
-            )
+            track_w = w - label_w - right_pad
+            bar_w = max(0.0, track_w * ratio)
+            # Track (background bar)
             c.create_rectangle(
-                label_w, y + 3, label_w + bar_w, y + bar_h - 3, fill=color, outline=""
+                label_w, y + 4, label_w + track_w, y + bar_h - 4,
+                fill=track_color, outline="",
             )
+            # Filled bar
+            if bar_w > 0:
+                c.create_rectangle(
+                    label_w, y + 4, label_w + bar_w, y + bar_h - 4,
+                    fill=color, outline="",
+                )
+            # Label (left)
             c.create_text(
-                label_w + bar_w + 6,
-                y + bar_h / 2,
-                anchor="w",
-                text=f"{v:,}",
-                fill="#d6deeb",
-                font=("Cascadia Mono", 9),
+                14, y + bar_h / 2, anchor="w",
+                text=kind, fill="#e6edf3",
+                font=("Segoe UI Variable", 10, "bold"),
+            )
+            # Value (right of bar)
+            c.create_text(
+                label_w + track_w + 12, y + bar_h / 2, anchor="w",
+                text=f"{v:,}", fill="#e6edf3",
+                font=("Segoe UI Variable", 9),
             )
 
 
@@ -1092,15 +1139,56 @@ class TrackerApp:
 
     # ---- styling ----------------------------------------------------------
 
+    # Refined palette — GitHub Dark Pro / Linear-inspired. Used by both
+    # ttk styles and Canvas widgets (LogView, Sparkline, kind bars).
+    PALETTE = {
+        "base":     "#0a0c10",   # window bg
+        "surface":  "#0d1117",   # card bg
+        "elevated": "#161b22",   # button / pill bg
+        "higher":   "#1c2128",   # button hover bg
+        "border":   "#21262d",
+        "border_h": "#3d444d",
+        "ink":      "#e6edf3",
+        "muted":    "#8b949e",
+        "faint":    "#6e7681",
+        "accent":   "#58a6ff",
+        "accent_h": "#79c0ff",
+        "success":  "#3fb950",
+        "warning":  "#d29922",
+        "danger":   "#f85149",
+    }
+
+    # Prefer Segoe UI Variable (Windows 11 default), fall back to Segoe UI.
+    UI_FONT = ("Segoe UI Variable", 10)
+    UI_FONT_SM = ("Segoe UI Variable", 9)
+    UI_FONT_BOLD = ("Segoe UI Variable", 10, "bold")
+    UI_FONT_HEADING = ("Segoe UI Variable", 14, "bold")
+    UI_FONT_TINY = ("Segoe UI Variable", 8)
+
     def _configure_root(self) -> None:
         self.root.title(APP_TITLE)
-        self.root.geometry("1100x700")
-        self.root.minsize(720, 460)
+        self.root.geometry("1180x740")
+        self.root.minsize(820, 520)
 
         try:
             ico = self.root_path / "service" / "native" / "resources" / "tracker.ico"
             if ico.exists():
                 self.root.iconbitmap(default=str(ico))
+        except Exception:
+            pass
+
+        # Resolve actual font family — fall back if "Segoe UI Variable" missing.
+        try:
+            import tkinter.font as tkfont
+            available = set(tkfont.families())
+            family = "Segoe UI Variable" if "Segoe UI Variable" in available else (
+                "Segoe UI" if "Segoe UI" in available else "Tk default"
+            )
+            self.UI_FONT = (family, 10)
+            self.UI_FONT_SM = (family, 9)
+            self.UI_FONT_BOLD = (family, 10, "bold")
+            self.UI_FONT_HEADING = (family, 14, "bold")
+            self.UI_FONT_TINY = (family, 8)
         except Exception:
             pass
 
@@ -1110,127 +1198,212 @@ class TrackerApp:
         except tk.TclError:
             pass
 
-        bg = "#0e1116"
-        bg_alt = "#161b22"
-        fg = "#d6deeb"
-        muted = "#8b949e"
-        border = "#30363d"
-        accent = "#58a6ff"
+        p = self.PALETTE
+        self.root.configure(background=p["base"])
+        self.root.option_add("*Font", self.UI_FONT)
 
-        self.root.configure(background=bg)
-
-        style.configure(".", background=bg, foreground=fg, fieldbackground=bg_alt)
-        style.configure("TFrame", background=bg)
-        style.configure("Toolbar.TFrame", background=bg_alt)
-        style.configure("Header.TFrame", background=bg_alt)
-        style.configure("TLabel", background=bg, foreground=fg)
-        style.configure("Header.TLabel", background=bg_alt, foreground=fg)
-        style.configure("Muted.TLabel", background=bg_alt, foreground=muted)
-        style.configure("Status.TLabel", background=bg_alt, foreground=fg, padding=(8, 4))
-        style.configure("Pill.TLabel", background=bg_alt, foreground=fg, padding=(8, 2))
-        style.configure(
-            "TButton",
-            background=bg_alt,
-            foreground=fg,
-            borderwidth=1,
-            focusthickness=0,
-            padding=(10, 4),
-        )
-        style.map(
-            "TButton",
-            background=[("active", border), ("disabled", bg_alt)],
-            foreground=[("disabled", muted)],
-        )
-        style.configure(
-            "Accent.TButton", background=accent, foreground="#0d1117", padding=(14, 6)
-        )
-        style.map("Accent.TButton", background=[("active", "#79c0ff")])
-        style.configure("TCheckbutton", background=bg_alt, foreground=fg)
-        style.map("TCheckbutton", background=[("active", bg_alt)])
-        style.configure("TEntry", fieldbackground=bg_alt, foreground=fg, insertcolor=fg)
-        style.configure("TCombobox", fieldbackground=bg_alt, foreground=fg)
-        style.configure("TNotebook", background=bg, borderwidth=0)
-        style.configure(
-            "TNotebook.Tab",
-            background=bg,
-            foreground=muted,
-            padding=(14, 6),
+        # ---- base ----
+        style.configure(".",
+            background=p["base"],
+            foreground=p["ink"],
+            fieldbackground=p["surface"],
             borderwidth=0,
+            relief="flat",
+            font=self.UI_FONT,
         )
-        style.map(
-            "TNotebook.Tab",
-            background=[("selected", bg_alt)],
-            foreground=[("selected", fg)],
+
+        # ---- frames (named layers) ----
+        style.configure("TFrame", background=p["base"])
+        style.configure("Header.TFrame", background=p["surface"])
+        style.configure("Toolbar.TFrame", background=p["surface"])
+        style.configure("Section.TFrame", background=p["surface"])
+        style.configure("Card.TFrame", background=p["elevated"], relief="flat")
+
+        # ---- labels ----
+        lbl_pairs = [
+            ("TLabel",          p["base"],     p["ink"],   self.UI_FONT,         None),
+            ("Header.TLabel",   p["surface"],  p["ink"],   self.UI_FONT_BOLD,    None),
+            ("Heading.TLabel",  p["surface"],  p["ink"],   self.UI_FONT_HEADING, None),
+            ("Muted.TLabel",    p["surface"],  p["muted"], self.UI_FONT_SM,      None),
+            ("Faint.TLabel",    p["surface"],  p["faint"], self.UI_FONT_TINY,    None),
+            ("Status.TLabel",   p["surface"],  p["ink"],   self.UI_FONT_BOLD,    (0, 0)),
+            ("Pill.TLabel",     p["elevated"], p["ink"],   self.UI_FONT_SM,      (10, 4)),
+            ("Card.TLabel",     p["elevated"], p["muted"], ("Segoe UI Variable", 8), None),
+            ("CardValue.TLabel", p["elevated"], "#f0f6fc", self.UI_FONT_BOLD,    None),
+        ]
+        for name, bg, fg, fnt, pad in lbl_pairs:
+            kw: dict = {"background": bg, "foreground": fg, "font": fnt}
+            if pad is not None:
+                kw["padding"] = pad
+            style.configure(name, **kw)
+
+        # ---- buttons ----
+        # Subtle ghost-style by default (no harsh borders) — modern flat look.
+        style.configure("TButton",
+            background=p["elevated"], foreground=p["ink"],
+            borderwidth=0, focusthickness=0,
+            padding=(12, 6), font=self.UI_FONT,
         )
-        style.configure("TSeparator", background=border)
-        style.configure("Card.TFrame", background=bg_alt, relief="flat")
-        style.configure("Card.TLabel", background=bg_alt, foreground=muted)
-        style.configure("CardValue.TLabel", background=bg_alt, foreground="#f0f6fc")
+        style.map("TButton",
+            background=[("active", p["higher"]), ("disabled", p["elevated"])],
+            foreground=[("disabled", p["faint"])],
+        )
+
+        # Primary accent button — used for the main "▶ Start" action.
+        style.configure("Accent.TButton",
+            background=p["accent"], foreground="#06121f",
+            borderwidth=0, focusthickness=0,
+            padding=(14, 7), font=self.UI_FONT_BOLD,
+        )
+        style.map("Accent.TButton",
+            background=[("active", p["accent_h"]), ("disabled", p["elevated"])],
+            foreground=[("disabled", p["muted"])],
+        )
+
+        # Danger button — for force-kill operations.
+        style.configure("Danger.TButton",
+            background=p["elevated"], foreground=p["danger"],
+            borderwidth=0, focusthickness=0,
+            padding=(12, 6), font=self.UI_FONT,
+        )
+        style.map("Danger.TButton",
+            background=[("active", "#3a1d1f")],
+        )
+
+        # ---- inputs ----
+        style.configure("TCheckbutton",
+            background=p["surface"], foreground=p["muted"],
+            font=self.UI_FONT_SM, focuscolor=p["accent"],
+        )
+        style.map("TCheckbutton",
+            background=[("active", p["surface"])],
+            foreground=[("active", p["ink"])],
+        )
+        style.configure("TEntry",
+            fieldbackground=p["elevated"], foreground=p["ink"],
+            insertcolor=p["ink"], borderwidth=0, padding=(8, 6),
+        )
+
+        # ---- tabs (modern underline style) ----
+        style.configure("TNotebook",
+            background=p["base"], borderwidth=0, tabmargins=(8, 6, 8, 0),
+        )
+        style.configure("TNotebook.Tab",
+            background=p["base"], foreground=p["muted"],
+            padding=(16, 9), borderwidth=0, font=self.UI_FONT,
+        )
+        style.map("TNotebook.Tab",
+            background=[("selected", p["base"]), ("active", p["base"])],
+            foreground=[("selected", p["ink"]), ("active", p["accent_h"])],
+        )
+
+        style.configure("TSeparator", background=p["border"])
+
+        # Scrollbar polish — flat, narrow.
+        style.configure("Vertical.TScrollbar",
+            background=p["surface"], troughcolor=p["base"],
+            borderwidth=0, arrowcolor=p["faint"], relief="flat", width=10,
+        )
+        style.map("Vertical.TScrollbar", background=[("active", p["higher"])])
+        style.configure("Horizontal.TScrollbar",
+            background=p["surface"], troughcolor=p["base"],
+            borderwidth=0, arrowcolor=p["faint"], relief="flat",
+        )
 
     # ---- layout -----------------------------------------------------------
 
     def _build_layout(self) -> None:
-        # ----- top header (status + admin + port) ------------------------
+        # ----- top header — app title left, status pill + meta pills right
         header = ttk.Frame(self.root, style="Header.TFrame")
         header.pack(side=tk.TOP, fill=tk.X)
 
-        self.status_dot = tk.Canvas(
-            header, width=14, height=14, bg="#161b22", highlightthickness=0
+        # Brand block (icon-style square + title + subtitle)
+        brand = ttk.Frame(header, style="Header.TFrame")
+        brand.pack(side=tk.LEFT, padx=(20, 12), pady=(16, 14))
+
+        # A small accent square as a logo placeholder.
+        logo = tk.Canvas(
+            brand, width=28, height=28,
+            bg=self.PALETTE["surface"], highlightthickness=0,
         )
-        self._status_circle = self.status_dot.create_oval(
-            2, 2, 12, 12, fill="#6e7681", outline=""
-        )
-        self.status_dot.pack(side=tk.LEFT, padx=(12, 6), pady=8)
+        logo.create_rectangle(0, 0, 28, 28, fill="#0d1117", outline="")
+        logo.create_rectangle(4, 4, 13, 13, fill=self.PALETTE["accent"], outline="")
+        logo.create_rectangle(15, 4, 24, 13, fill="#7ee787", outline="")
+        logo.create_rectangle(4, 15, 13, 24, fill="#d2a8ff", outline="")
+        logo.create_rectangle(15, 15, 24, 24, fill="#f1e05a", outline="")
+        logo.pack(side=tk.LEFT, padx=(0, 12))
 
-        self.status_label = ttk.Label(header, text="Stopped", style="Status.TLabel")
-        self.status_label.pack(side=tk.LEFT)
+        title_block = ttk.Frame(brand, style="Header.TFrame")
+        title_block.pack(side=tk.LEFT)
+        ttk.Label(title_block, text=APP_TITLE, style="Heading.TLabel").pack(anchor="w")
+        ttk.Label(
+            title_block,
+            text="Real-time Windows process activity — file · registry · process · network",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(2, 0))
 
-        ttk.Separator(header, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=6)
-
-        self.admin_label = ttk.Label(header, text="Admin: ?", style="Pill.TLabel")
-        self.admin_label.pack(side=tk.LEFT, padx=4, pady=8)
-
-        ttk.Separator(header, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=6)
+        # Right cluster: status pill + admin + port
+        right = ttk.Frame(header, style="Header.TFrame")
+        right.pack(side=tk.RIGHT, padx=(8, 20), pady=(20, 18))
 
         self.port_label = ttk.Label(
-            header, text=f"Port: {self.port}", style="Pill.TLabel"
+            right, text=f"Port  {self.port}", style="Pill.TLabel"
         )
-        self.port_label.pack(side=tk.LEFT, padx=4, pady=8)
+        self.port_label.pack(side=tk.RIGHT, padx=4)
 
-        ttk.Label(header, text=APP_TITLE, style="Header.TLabel").pack(
-            side=tk.RIGHT, padx=12
+        self.admin_label = ttk.Label(right, text="Admin · ?", style="Pill.TLabel")
+        self.admin_label.pack(side=tk.RIGHT, padx=4)
+
+        # Status pill: animated dot + label.
+        self.status_pill = ttk.Frame(right, style="Header.TFrame")
+        self.status_pill.pack(side=tk.RIGHT, padx=4)
+        self.status_dot = tk.Canvas(
+            self.status_pill, width=12, height=12,
+            bg=self.PALETTE["surface"], highlightthickness=0,
         )
+        self._status_circle = self.status_dot.create_oval(
+            1, 1, 11, 11, fill=self.PALETTE["faint"], outline=""
+        )
+        self.status_dot.pack(side=tk.LEFT, padx=(0, 8))
+        self.status_label = ttk.Label(
+            self.status_pill, text="Stopped", style="Header.TLabel"
+        )
+        self.status_label.pack(side=tk.LEFT)
 
-        # ----- action row -------------------------------------------------
+        # Separator below header
+        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(side=tk.TOP, fill=tk.X)
+
+        # ----- action row — primary CTA on left, secondary on right -----
         actions = ttk.Frame(self.root, style="Toolbar.TFrame")
         actions.pack(side=tk.TOP, fill=tk.X)
 
+        actions_left = ttk.Frame(actions, style="Toolbar.TFrame")
+        actions_left.pack(side=tk.LEFT, padx=20, pady=12)
         self.btn_start = ttk.Button(
-            actions, text="▶  Start", style="Accent.TButton", command=self._on_start
+            actions_left, text="▶  Start", style="Accent.TButton", command=self._on_start
         )
-        self.btn_start.pack(side=tk.LEFT, padx=(8, 4), pady=8)
-
-        self.btn_stop = ttk.Button(actions, text="■  Stop", command=self._on_stop)
-        self.btn_stop.pack(side=tk.LEFT, padx=4, pady=8)
-
+        self.btn_start.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_stop = ttk.Button(actions_left, text="■  Stop", command=self._on_stop)
+        self.btn_stop.pack(side=tk.LEFT, padx=4)
         self.btn_restart = ttk.Button(
-            actions, text="↻  Restart", command=self._on_restart
+            actions_left, text="↻  Restart", command=self._on_restart
         )
-        self.btn_restart.pack(side=tk.LEFT, padx=4, pady=8)
+        self.btn_restart.pack(side=tk.LEFT, padx=4)
 
-        ttk.Separator(actions, orient=tk.VERTICAL).pack(
-            side=tk.LEFT, fill=tk.Y, padx=8, pady=6
+        actions_right = ttk.Frame(actions, style="Toolbar.TFrame")
+        actions_right.pack(side=tk.RIGHT, padx=20, pady=12)
+        ttk.Button(actions_right, text="About", command=self._on_about).pack(
+            side=tk.RIGHT, padx=4
         )
-
+        ttk.Button(actions_right, text="Open folder", command=self._on_open_folder).pack(
+            side=tk.RIGHT, padx=4
+        )
         ttk.Button(
-            actions, text="🌐  Open in browser", command=self._on_open_browser
-        ).pack(side=tk.LEFT, padx=4, pady=8)
-        ttk.Button(actions, text="📁  Open folder", command=self._on_open_folder).pack(
-            side=tk.LEFT, padx=4, pady=8
-        )
-        ttk.Button(actions, text="ℹ  About", command=self._on_about).pack(
-            side=tk.RIGHT, padx=8, pady=8
-        )
+            actions_right, text="Open in browser", command=self._on_open_browser
+        ).pack(side=tk.RIGHT, padx=4)
+
+        # Separator between action row and tabs
+        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(side=tk.TOP, fill=tk.X)
 
         # ----- main tabs (capture monitor + per-stream log views) ---------
         self.tabs = ttk.Notebook(self.root)
@@ -1254,18 +1427,21 @@ class TrackerApp:
         self.tabs.add(self.log_native, text="Native")
 
         # ----- footer -----------------------------------------------------
+        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(side=tk.BOTTOM, fill=tk.X)
         footer = ttk.Frame(self.root, style="Toolbar.TFrame")
         footer.pack(side=tk.BOTTOM, fill=tk.X)
         self.footer_label = ttk.Label(
             footer,
-            text=f"Folder: {self.root_path}",
+            text=f"📁  {self.root_path}",
             style="Muted.TLabel",
             anchor="w",
         )
-        self.footer_label.pack(side=tk.LEFT, padx=8, pady=4)
+        self.footer_label.pack(side=tk.LEFT, padx=20, pady=8)
         ttk.Label(
-            footer, text="F5 = restart   Ctrl+Q = quit", style="Muted.TLabel"
-        ).pack(side=tk.RIGHT, padx=8, pady=4)
+            footer,
+            text="F5  restart    Ctrl+F  search    Ctrl+L  clear    Ctrl+Q  quit",
+            style="Faint.TLabel",
+        ).pack(side=tk.RIGHT, padx=20, pady=8)
 
     # ---- status ----------------------------------------------------------
 
