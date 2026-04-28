@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Bump pyproject.toml version, commit, tag, and push so a new release builds.
 
@@ -66,8 +66,9 @@ $status = git status --porcelain
 if ($status) {
     Write-Host "Uncommitted changes:" -ForegroundColor Yellow
     Write-Host $status
-    if (-not (Read-Host "Continue and amend them into the release commit? (y/N)") -match '^y') {
-        throw "Aborted — commit or stash your changes first."
+    $ans = Read-Host "Continue and amend them into the release commit? (y/N)"
+    if ($ans -notmatch '^y') {
+        throw "Aborted - commit or stash your changes first."
     }
 }
 
@@ -89,6 +90,6 @@ git push origin "v$next"
 
 Write-Host ""
 Write-Host "=============================================================" -ForegroundColor Green
-Write-Host " v$next pushed — release.yml is now building the zip." -ForegroundColor Green
+Write-Host " v$next pushed - release.yml is now building the zip." -ForegroundColor Green
 Write-Host " Watch: https://github.com/botnick/Program-Activity-Tracker/actions" -ForegroundColor Green
 Write-Host "=============================================================" -ForegroundColor Green
