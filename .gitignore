@@ -19,11 +19,21 @@ dist/
 
 # Build artifacts
 build/
-*.spec
+
+# Compiled binaries — built by CI, never committed
+*.exe
+*.dll
+*.pyd
+
+# PyInstaller intermediates
+launcher/build/
+launcher/dist/
 
 # Release packaging output (built by scripts/build-release.ps1 or CI)
 release/
 ActivityTracker-v*.zip
+python-embed/
+python-embed.zip
 
 # Runtime / data
 *.db

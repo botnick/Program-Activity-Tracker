@@ -59,6 +59,10 @@ extend-immutable-calls = [
 "backend/app/api_routes.py" = ["SIM114", "SIM105"]
 "backend/app/store.py" = ["SIM105"]
 "service/capture_service.py" = ["SIM105"]
+# Launcher does a lot of best-effort cleanup (Tk widget teardown, subprocess
+# termination, AV-killed binaries) where contextlib.suppress isn't worth the
+# import noise. SIM112 is wrong on Windows: %ProgramFiles% is mixed-case.
+"launcher/tracker_launcher.py" = ["SIM105", "SIM112", "UP031"]
 
 [tool.mypy]
 python_version = "3.10"

@@ -34,7 +34,13 @@
 param(
     [string]$Version,
     [switch]$SkipBuild,
-    [string]$OutputDir
+    [string]$OutputDir,
+
+    # CI passes these so the script does not have to bootstrap them itself.
+    # Locally, omit to skip Python bundling and launcher exe — the resulting
+    # zip then needs system Python and is meant for dev smoke-testing only.
+    [string]$PythonEmbedDir,
+    [string]$LauncherExe
 )
 
 $ErrorActionPreference = "Stop"
@@ -160,12 +166,39 @@ Get-ChildItem -Path $mcpSrcDest -Recurse -Force -Directory -Filter "__pycache__"
 Copy-Item (Join-Path $repoRoot ".mcp.json") $relDir
 
 # --- copy release templates ----------------------------------------------
+# Only README.txt + requirements.txt go into the zip. start.bat / stop.bat
+# stay in the repo for dev convenience but are NOT part of the release —
+# tracker.exe replaces both.
 Write-Host "==> Copying release templates" -ForegroundColor Cyan
 $tplDir = Join-Path $repoRoot "scripts\release-template"
-foreach ($f in @("start.bat", "stop.bat", "README.txt", "requirements.txt")) {
+foreach ($f in @("README.txt", "requirements.txt")) {
     $src = Join-Path $tplDir $f
     if (-not (Test-Path $src)) { throw "Missing template: $src" }
     Copy-Item $src $relDir
+}
+
+# --- bundled Python (embeddable) -----------------------------------------
+if ($PythonEmbedDir) {
+    if (-not (Test-Path $PythonEmbedDir)) {
+        throw "PythonEmbedDir does not exist: $PythonEmbedDir"
+    }
+    Write-Host "==> Copying bundled Python" -ForegroundColor Cyan
+    $pyDest = Join-Path $relDir "python"
+    New-Item -ItemType Directory -Force -Path $pyDest | Out-Null
+    Copy-Item (Join-Path $PythonEmbedDir "*") -Destination $pyDest -Recurse
+} else {
+    Write-Host "    [skip] no PythonEmbedDir; release will need system Python" -ForegroundColor Yellow
+}
+
+# --- launcher tracker.exe -------------------------------------------------
+if ($LauncherExe) {
+    if (-not (Test-Path $LauncherExe)) {
+        throw "LauncherExe does not exist: $LauncherExe"
+    }
+    Write-Host "==> Copying tracker.exe (launcher)" -ForegroundColor Cyan
+    Copy-Item $LauncherExe (Join-Path $relDir "tracker.exe")
+} else {
+    Write-Host "    [skip] no LauncherExe; release will be missing tracker.exe" -ForegroundColor Yellow
 }
 
 # --- defender exclusion helper (optional, useful) ------------------------
