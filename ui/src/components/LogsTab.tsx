@@ -13,6 +13,34 @@ const STREAM_LABELS: Record<string, string> = {
   native: 'Native',
 };
 
+// Short hint shown next to the stream picker so users know which log to read.
+const STREAM_HINTS: Record<string, string> = {
+  errors: 'WARN/ERROR only — start here when something looks wrong',
+  tracker: 'every backend log line (mixed)',
+  events: 'one entry per captured ETW event (very high volume)',
+  requests: 'HTTP request access log + trace id + duration',
+  native: 'stdout/stderr from the C++ tracker_capture.exe',
+};
+
+// Color hint for level chips. Matches names against substrings — any
+// unknown level falls back to a neutral chip and is fully toggleable just
+// like the known ones. The displayed level list is discovered from the
+// incoming entries; nothing about *which* levels exist is hardcoded.
+function levelChipClass(name: string): string {
+  const n = name.toUpperCase();
+  if (n.includes('ERROR') || n === 'CRITICAL' || n === 'FATAL') {
+    return 'border-rose-500/60 bg-rose-500/10 text-rose-200';
+  }
+  if (n.startsWith('WARN')) {
+    return 'border-amber-500/60 bg-amber-500/10 text-amber-200';
+  }
+  if (n === 'INFO') return 'border-cyan-500/60 bg-cyan-500/10 text-cyan-200';
+  if (n === 'DEBUG' || n === 'TRACE') {
+    return 'border-slate-500/60 bg-slate-500/10 text-slate-200';
+  }
+  return 'border-slate-500/60 bg-slate-500/10 text-slate-200';
+}
+
 function levelClass(level: string | undefined): string {
   const lv = (level ?? '').toUpperCase();
   if (lv === 'ERROR' || lv === 'CRITICAL' || lv === 'FATAL')
@@ -70,22 +98,92 @@ function humanSize(bytes: number): string {
 }
 
 function LogsTabInner() {
-  const [stream, setStream] = useState<string>('tracker');
+  // Default to `errors` so the first impression is "the things you care
+  // about" — `tracker` is the everything-mixed firehose.
+  const [stream, setStream] = useState<string>('errors');
   const [live, setLive] = useState<boolean>(true);
   const [search, setSearch] = useState<string>('');
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
+  // Set of HIDDEN level names. Default empty = show every discovered level.
+  // The level list itself comes from the incoming entries, so a custom
+  // CRITICAL/NOTICE/etc. shows up as a chip just like INFO does — never
+  // hardcoded into the source.
+  const [hiddenLevels, setHiddenLevels] = useState<Set<string>>(() => new Set());
+  // Set of logger names the user has HIDDEN. Default empty = show all.
+  // Discovered dynamically from the entries themselves — never hardcoded.
+  const [hiddenLoggers, setHiddenLoggers] = useState<Set<string>>(() => new Set());
+  const [showLoggerPanel, setShowLoggerPanel] = useState(false);
 
   const { entries, streams, connected } = useLogStream(stream, live);
 
+  const toggleLevel = useCallback((level: string) => {
+    setHiddenLevels((current) => {
+      const next = new Set(current);
+      if (next.has(level)) next.delete(level);
+      else next.add(level);
+      return next;
+    });
+  }, []);
+
+  const showAllLevels = useCallback(() => {
+    setHiddenLevels(new Set());
+  }, []);
+
+  // Discovered levels + counts from the full buffer. Sorted by count desc so
+  // the dominant levels surface first. Nothing about *which* levels exist is
+  // hardcoded; CRITICAL / NOTICE / TRACE / a custom level all appear as chips
+  // automatically.
+  const levelEntries = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of entries) {
+      const lv = ((e.level ?? '').toString().toUpperCase()) || '(none)';
+      counts.set(lv, (counts.get(lv) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+  }, [entries]);
+
+  // Logger names + counts — discovered dynamically from the entries so the
+  // user gets a one-click toggle for the noisy modules without us hardcoding
+  // module names.
+  const loggerCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of entries) {
+      const name = (e.logger ?? '(unknown)') || '(unknown)';
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+  }, [entries]);
+
+  const toggleLogger = useCallback((name: string) => {
+    setHiddenLoggers((current) => {
+      const next = new Set(current);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
+
+  const showAllLoggers = useCallback(() => setHiddenLoggers(new Set()), []);
+  const hideAllLoggers = useCallback(() => {
+    setHiddenLoggers(new Set(loggerCounts.map(([name]) => name)));
+  }, [loggerCounts]);
+  const toggleLoggerPanel = useCallback(() => {
+    setShowLoggerPanel((v) => !v);
+  }, []);
+
   const visible = useMemo<LogEntry[]>(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return entries;
     return entries.filter((e) => {
+      const lv = ((e.level ?? '').toString().toUpperCase()) || '(none)';
+      if (hiddenLevels.has(lv)) return false;
+      const loggerName = (e.logger ?? '(unknown)') || '(unknown)';
+      if (hiddenLoggers.has(loggerName)) return false;
+      if (!q) return true;
       const blob =
         `${e.message ?? ''} ${e.logger ?? ''} ${e.level ?? ''} ${entryText(e)}`.toLowerCase();
       return blob.includes(q);
     });
-  }, [entries, search]);
+  }, [entries, search, hiddenLevels, hiddenLoggers]);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -232,11 +330,117 @@ function LogsTabInner() {
           />
         </div>
 
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-slate-500">levels</span>
+          {levelEntries.length === 0 ? (
+            <span className="text-slate-600">
+              none discovered yet — chips appear as the stream emits entries
+            </span>
+          ) : (
+            levelEntries.map(([lv, count]) => {
+              const active = !hiddenLevels.has(lv);
+              return (
+                <button
+                  key={lv}
+                  type="button"
+                  onClick={() => toggleLevel(lv)}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide transition ${
+                    active ? levelChipClass(lv) : 'border-slate-700 bg-slate-950 text-slate-500'
+                  }`}
+                >
+                  {lv} <span className="ml-1 text-slate-500">{count}</span>
+                </button>
+              );
+            })
+          )}
+          <button
+            type="button"
+            onClick={showAllLevels}
+            className="rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-400 hover:border-cyan-500/60 hover:text-cyan-200"
+          >
+            All
+          </button>
+          <span className="ml-2 truncate text-slate-500">
+            {STREAM_HINTS[stream] ?? ''}
+          </span>
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-950">
+          <button
+            type="button"
+            onClick={toggleLoggerPanel}
+            className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-900"
+          >
+            <div className="flex items-center gap-2">
+              <span>{showLoggerPanel ? '▾' : '▸'}</span>
+              <span className="font-medium">Loggers</span>
+              <span className="text-slate-500">
+                {loggerCounts.length} discovered
+                {hiddenLoggers.size > 0 ? ` · ${hiddenLoggers.size} hidden` : ''}
+              </span>
+            </div>
+            <div
+              className="flex items-center gap-1"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={showAllLoggers}
+                className="rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300 hover:border-cyan-500/60 hover:text-cyan-200"
+              >
+                Show all
+              </button>
+              <button
+                type="button"
+                onClick={hideAllLoggers}
+                className="rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300 hover:border-rose-500/60 hover:text-rose-200"
+              >
+                Hide all
+              </button>
+            </div>
+          </button>
+          {showLoggerPanel && (
+            <div className="grid gap-1 border-t border-slate-800 p-2 sm:grid-cols-2 lg:grid-cols-3">
+              {loggerCounts.length === 0 ? (
+                <div className="col-span-full px-2 py-1 text-[11px] text-slate-600">
+                  no entries yet — loggers will appear as the stream emits lines
+                </div>
+              ) : (
+                loggerCounts.map(([name, count]) => {
+                  const isHidden = hiddenLoggers.has(name);
+                  return (
+                    <label
+                      key={name}
+                      className={`flex cursor-pointer items-center justify-between gap-2 rounded px-1.5 py-1 text-[11px] hover:bg-slate-900 ${isHidden ? 'opacity-50' : ''}`}
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <input
+                          type="checkbox"
+                          checked={!isHidden}
+                          onChange={() => toggleLogger(name)}
+                          className="h-3 w-3 accent-cyan-500"
+                        />
+                        <span className="truncate font-mono text-slate-300">
+                          {name}
+                        </span>
+                      </span>
+                      <span className="font-mono text-slate-600">{count}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="overflow-hidden rounded-2xl border border-slate-800">
           <div
             ref={parentRef}
-            className="max-h-[68vh] overflow-auto"
-            style={{ contain: 'strict' }}
+            className="overflow-auto"
+            // contain:strict + no explicit height collapses the container to
+            // 0px regardless of how many rows the virtualizer reports. Use
+            // `content` and pin a min/max height so the panel is always visible.
+            style={{ contain: 'content', minHeight: '50vh', maxHeight: '68vh' }}
           >
             <div className="sticky top-0 z-10 grid grid-cols-[80px_60px_1fr] sm:grid-cols-[100px_70px_140px_1fr] md:grid-cols-[110px_70px_180px_1fr] bg-slate-950 text-xs text-slate-400">
               <div className="px-3 py-2">Time</div>

@@ -275,12 +275,18 @@ async def create_session(request: ProcessSelectRequest) -> SessionResponse:
 
 
 @router.delete("/api/sessions/{session_id}")
-def stop_session(session_id: str) -> dict[str, str]:
+def stop_session(
+    session_id: str,
+    purge: bool = Query(False, description="If true, also delete the session row + its events from the DB."),
+) -> dict[str, str]:
     if store.get(session_id) is None:
         raise HTTPException(status_code=404, detail="session not found")
     service = store.detach_capture(session_id)
     if service is not None:
         service.stop()
+    if purge:
+        store.purge_session(session_id)
+        return {"status": "purged"}
     session = store.get(session_id)
     if session is not None:
         session["status"] = "stopped"
@@ -289,6 +295,18 @@ def stop_session(session_id: str) -> dict[str, str]:
             session_id, status="stopped", capture="stopped", capture_error=None
         )
     return {"status": "stopped"}
+
+
+@router.post("/api/sessions/cleanup")
+def cleanup_sessions() -> dict[str, Any]:
+    """Bulk-delete every session whose capture is not currently active.
+
+    Useful for trimming the SessionList after a long debugging run that
+    leaves a tail of stopped / interrupted / needs_admin sessions for the
+    same exe. Active live sessions are preserved.
+    """
+    removed = store.purge_inactive_sessions()
+    return {"status": "purged", "count": len(removed), "ids": removed}
 
 
 @router.get("/api/sessions")
@@ -304,6 +322,8 @@ def get_events(
     since: str | None = Query(None),
     until: str | None = Query(None),
     q: str | None = Query(None),
+    # Repeat the param to allow-list operations: ?operation=write&operation=create
+    operation: list[str] | None = Query(None),
     limit: int = Query(1000, ge=1, le=10000),
     offset: int = Query(0, ge=0),
 ) -> dict[str, list[dict[str, Any]]]:
@@ -312,7 +332,7 @@ def get_events(
     return {
         "items": store.query_events(
             session_id, kind=kind, pid=pid, since=since, until=until, q=q,
-            limit=limit, offset=offset,
+            operations=operation, limit=limit, offset=offset,
         )
     }
 
@@ -325,13 +345,16 @@ def export_events(
     since: str | None = None,
     until: str | None = None,
     q: str | None = None,
+    operation: list[str] | None = Query(None),
 ):
     if store.get(session_id) is None:
         raise HTTPException(status_code=404, detail="session not found")
 
     if format == "jsonl":
         def gen():
-            for row in store.iter_events(session_id, kind=kind, since=since, until=until, q=q):
+            for row in store.iter_events(
+                session_id, kind=kind, since=since, until=until, q=q, operations=operation
+            ):
                 yield (_json.dumps(row, default=str) + "\n").encode()
         media = "application/x-jsonlines"
     else:
@@ -347,7 +370,9 @@ def export_events(
             yield buf.getvalue().encode()
             buf.seek(0)
             buf.truncate()
-            for row in store.iter_events(session_id, kind=kind, since=since, until=until, q=q):
+            for row in store.iter_events(
+                session_id, kind=kind, since=since, until=until, q=q, operations=operation
+            ):
                 details = row.get("details")
                 w.writerow([
                     row.get(c) if c != "details" else _json.dumps(details, default=str)
@@ -388,23 +413,43 @@ async def emit_event(session_id: str, payload: dict[str, Any]) -> dict[str, str]
 
 
 @router.websocket("/ws/sessions/{session_id}")
-async def stream_session(websocket: WebSocket, session_id: str) -> None:
+async def stream_session(
+    websocket: WebSocket,
+    session_id: str,
+    since: str | None = Query(None),
+    replay: bool = Query(True),
+) -> None:
+    """WebSocket event stream.
+
+    Query params:
+      - ``since``: ISO timestamp. Only events with ``timestamp > since`` are
+        included in the replay phase. Use this on reconnect so the client
+        doesn't receive events it already has via HTTP backfill.
+      - ``replay``: when False, skip the ring-buffer replay entirely and
+        only stream new events. Useful when the client has already loaded
+        history via ``GET /api/sessions/{id}/events``.
+    """
     if store.get(session_id) is None:
         await websocket.close(code=4404)
         return
     await websocket.accept()
     queue = hub.subscribe(session_id)
     try:
-        # Replay buffered history. default=str keeps non-JSON-native fields
-        # (datetimes, bytes converted upstream) from killing the connection.
-        for event in store.events(session_id):
-            try:
-                await websocket.send_text(json.dumps(asdict(event), default=str))
-            except (WebSocketDisconnect, ConnectionError, RuntimeError):
-                return
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("ws replay send failed: %s", exc)
-                continue
+        # Replay buffered history filtered by `since` (if provided). Skip
+        # entirely when ``replay=false``. ``default=str`` keeps non-JSON-native
+        # fields (datetimes, bytes converted upstream) from killing the
+        # connection.
+        if replay:
+            for event in store.events(session_id):
+                if since is not None and (event.timestamp or "") <= since:
+                    continue
+                try:
+                    await websocket.send_text(json.dumps(asdict(event), default=str))
+                except (WebSocketDisconnect, ConnectionError, RuntimeError):
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("ws replay send failed: %s", exc)
+                    continue
         # Tail new events.
         while True:
             payload = await queue.get()
@@ -451,8 +496,15 @@ def logs_tail(
 
 
 @router.websocket("/ws/logs/{stream}")
-async def logs_stream_ws(websocket: WebSocket, stream: str) -> None:
-    """Live tail a log file. Sends recent backlog then polls for new bytes."""
+async def logs_stream_ws(
+    websocket: WebSocket,
+    stream: str,
+    backlog: int = Query(100, ge=0, le=2000),
+) -> None:
+    """Live tail a log file. Sends ``backlog`` recent lines then polls for new
+    bytes. Pass ``backlog=0`` on reconnect to skip the replay and avoid
+    duplicating lines the client already has.
+    """
     from backend.app.config import get_settings
     from backend.app.observability import LOG_STREAM_FILENAMES, read_log_tail
 
@@ -467,10 +519,11 @@ async def logs_stream_ws(websocket: WebSocket, stream: str) -> None:
         log_dir = BASE_DIR / log_dir
     p = log_dir / LOG_STREAM_FILENAMES[stream]
 
-    # Send last 100 lines as backlog then tail.
-    backlog = read_log_tail(stream, 100)
-    for item in backlog:
-        await websocket.send_text(_json.dumps(item))
+    # Send up to ``backlog`` lines (skip when 0).
+    if backlog > 0:
+        backlog_items = read_log_tail(stream, backlog)
+        for item in backlog_items:
+            await websocket.send_text(_json.dumps(item))
 
     last_size = p.stat().st_size if p.exists() else 0
     try:

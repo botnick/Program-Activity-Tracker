@@ -43,6 +43,8 @@ export type EventQueryParams = {
   since?: string;
   until?: string;
   q?: string;
+  // Allow-list of operation names. Backend uses `?operation=...` repeated.
+  operation?: string[];
   limit?: number;
   offset?: number;
 };

@@ -418,6 +418,51 @@ class SessionStore:
             )
             self._conn.commit()
 
+    def purge_session(self, session_id: str) -> bool:
+        """Hard-delete a session and all its events.
+
+        Removes the in-memory session entry, the ring-buffer of live events,
+        and the persisted ``sessions`` row. Events cascade-delete via the
+        ``events.session_id`` foreign key (``ON DELETE CASCADE`` declared in
+        ``schema.sql``). Returns True if a row was removed.
+        """
+        with self._lock:
+            existed = session_id in self._sessions
+            self._sessions.pop(session_id, None)
+            self._events.pop(session_id, None)
+            cur = self._conn.execute(
+                "DELETE FROM sessions WHERE session_id = ?", (session_id,)
+            )
+            self._conn.commit()
+            return existed or (cur.rowcount or 0) > 0
+
+    def purge_inactive_sessions(
+        self, *, keep: tuple[str, ...] = ("live", "initializing", "tracking")
+    ) -> list[str]:
+        """Bulk-delete every session whose ``capture`` is not in ``keep``.
+
+        Returns the list of removed session ids. Used by the bulk-cleanup
+        endpoint so the UI can show a single "Clear stopped" button without
+        round-tripping per session.
+        """
+        with self._lock:
+            removed = [
+                sid
+                for sid, sess in list(self._sessions.items())
+                if sess.get("capture") not in keep
+            ]
+            for sid in removed:
+                self._sessions.pop(sid, None)
+                self._events.pop(sid, None)
+            if removed:
+                placeholders = ",".join("?" for _ in removed)
+                self._conn.execute(
+                    f"DELETE FROM sessions WHERE session_id IN ({placeholders})",
+                    removed,
+                )
+                self._conn.commit()
+            return removed
+
     # ---- public API: events ----------------------------------------------
 
     def add_event(self, event: ActivityEvent) -> None:
@@ -457,12 +502,14 @@ class SessionStore:
         since: str | None = None,
         until: str | None = None,
         q: str | None = None,
+        operations: list[str] | None = None,
         limit: int = 1000,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         """Filtered, paginated SQL read. Returns rows as dicts (details parsed)."""
         sql, params = self._build_query(
-            session_id, kind=kind, pid=pid, since=since, until=until, q=q
+            session_id, kind=kind, pid=pid, since=since, until=until, q=q,
+            operations=operations,
         )
         sql += " ORDER BY ts ASC, id ASC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -480,6 +527,7 @@ class SessionStore:
         since: str | None = None,
         until: str | None = None,
         q: str | None = None,
+        operations: list[str] | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Stream ``ts ASC`` rows for export.
 
@@ -487,7 +535,8 @@ class SessionStore:
         single request without holding the shared lock for the entire body.
         """
         sql, params = self._build_query(
-            session_id, kind=kind, pid=pid, since=since, until=until, q=q
+            session_id, kind=kind, pid=pid, since=since, until=until, q=q,
+            operations=operations,
         )
         sql += " ORDER BY ts ASC, id ASC"
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
@@ -508,6 +557,7 @@ class SessionStore:
         since: str | None,
         until: str | None,
         q: str | None,
+        operations: list[str] | None = None,
     ) -> tuple[str, list[Any]]:
         clauses = ["session_id = ?"]
         params: list[Any] = [session_id]
@@ -523,6 +573,10 @@ class SessionStore:
         if until is not None:
             clauses.append("ts <= ?")
             params.append(until)
+        if operations:
+            placeholders = ",".join("?" for _ in operations)
+            clauses.append(f"operation IN ({placeholders})")
+            params.extend(operations)
         if q:
             like = f"%{q}%"
             clauses.append(

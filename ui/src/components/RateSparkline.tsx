@@ -47,17 +47,23 @@ function pathFor(buckets: number[], width: number, height: number): { d: string;
 }
 
 function Spark({ label, color, buckets }: { label: string; color: string; buckets: number[] }) {
-  const width = 140;
-  const height = 32;
-  const { d, max } = pathFor(buckets, width, height);
+  // SVG uses a viewBox so width can scale to the grid cell — fixes the
+  // crowded sparkline grid at narrow viewport widths.
+  const vbWidth = 140;
+  const vbHeight = 32;
+  const { d, max } = pathFor(buckets, vbWidth, vbHeight);
   const total = buckets.reduce((a, b) => a + b, 0);
   return (
-    <div className="flex flex-col gap-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
-      <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-slate-500">
+    <div className="flex min-w-0 flex-col gap-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
+      <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wide text-slate-500">
         <span style={{ color }}>{label}</span>
-        <span className="font-mono text-slate-400">{total}/60s · peak {max}</span>
+        <span className="truncate font-mono text-slate-400">{total}/60s · peak {max}</span>
       </div>
-      <svg width={width} height={height} className="block">
+      <svg
+        viewBox={`0 0 ${vbWidth} ${vbHeight}`}
+        preserveAspectRatio="none"
+        className="block h-8 w-full"
+      >
         <path d={d} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" />
       </svg>
     </div>

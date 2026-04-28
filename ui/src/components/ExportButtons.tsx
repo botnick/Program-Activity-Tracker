@@ -3,7 +3,7 @@ import type { ToastMessage } from '../types';
 
 type Props = {
   sessionId?: string;
-  filters: Record<string, string>;
+  filters: Record<string, string | string[] | undefined>;
   onToast: (msg: Omit<ToastMessage, 'id'>) => void;
 };
 

@@ -30,6 +30,7 @@ import { ProcessTreeView } from './components/ProcessTreeView';
 import { RateSparkline } from './components/RateSparkline';
 import { ToastStack } from './components/ToastStack';
 import { LogsTab } from './components/LogsTab';
+import { OperationsFilter } from './components/OperationsFilter';
 
 type TabId = 'events' | 'logs';
 
@@ -47,6 +48,11 @@ export function App() {
   const [paused, setPaused] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<ActivityEvent | null>(null);
   const [showTree, setShowTree] = useState(false);
+  // Operations the user has hidden. Default empty = show everything; the
+  // OperationsFilter panel auto-discovers ops from the incoming stream so the
+  // user can pick what to hide and save it as a preset (persisted to
+  // localStorage). No domain knowledge is hardcoded here.
+  const [hiddenOps, setHiddenOps] = useState<Set<string>>(() => new Set());
 
   const pauseBufferRef = useRef<ActivityEvent[]>([]);
   const [bufferedCount, setBufferedCount] = useState(0);
@@ -87,14 +93,24 @@ export function App() {
   });
 
   const queryWindow = useMemo(() => rangeToWindow(timeRange), [timeRange]);
+  // Stable, sorted allow-list derived from hiddenOps so paramsKey memo in
+  // useEventQuery doesn't churn from set-iteration ordering.
+  const allowedOps = useMemo<string[] | undefined>(() => {
+    if (hiddenOps.size === 0) return undefined;
+    // The empty allow-list is meaningless to the backend; we only switch to
+    // server-side filtering when at least one allowed op is known. Otherwise
+    // the client-side filter in `visibleEvents` handles it.
+    return undefined;
+  }, [hiddenOps]);
   const queryParams = useMemo(
     () => ({
       since: queryWindow.since,
       until: queryWindow.until,
       q: eventQuery.trim() || undefined,
+      operation: allowedOps,
       limit: 5000,
     }),
-    [queryWindow, eventQuery],
+    [queryWindow, eventQuery, allowedOps],
   );
   const {
     events: queriedEvents,
@@ -214,6 +230,52 @@ export function App() {
     [pushToast, refreshSessions],
   );
 
+  const restartSession = useCallback(
+    (session: Session) => {
+      // Re-run start_session with the same exe_path. Backend's _resolve_target
+      // will look up the current pid for that exe; if the process isn't running
+      // anymore, the call surfaces a clear 404 toast.
+      startSession({ exe_path: session.exe_path });
+    },
+    [startSession],
+  );
+
+  const purgeSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        await api(`/api/sessions/${sessionId}?purge=true`, { method: 'DELETE' });
+        // If we just deleted the selected session, drop the selection so the
+        // event panel resets cleanly.
+        setSelectedSession((current) => (current === sessionId ? '' : current));
+        await refreshSessions();
+        pushToast({ kind: 'info', message: 'Session deleted' });
+      } catch (err) {
+        setError(String(err));
+      }
+    },
+    [pushToast, refreshSessions],
+  );
+
+  const cleanupSessions = useCallback(async () => {
+    try {
+      const result = await api<{ count: number; ids: string[] }>(
+        '/api/sessions/cleanup',
+        { method: 'POST' },
+      );
+      // If the active selection got swept, drop it.
+      setSelectedSession((current) =>
+        result.ids.includes(current) ? '' : current,
+      );
+      await refreshSessions();
+      pushToast({
+        kind: 'info',
+        message: `Cleared ${result.count} stopped session${result.count === 1 ? '' : 's'}`,
+      });
+    } catch (err) {
+      setError(String(err));
+    }
+  }, [pushToast, refreshSessions]);
+
   const toggleKind = useCallback((kind: Kind) => {
     setKindFilter((current) => {
       const next = new Set(current);
@@ -241,12 +303,15 @@ export function App() {
       ) {
         return false;
       }
+      if (event.operation && hiddenOps.has(event.operation)) {
+        return false;
+      }
       if (!q) return true;
       const blob =
         `${event.path ?? ''} ${event.target ?? ''} ${event.operation ?? ''} ${JSON.stringify(event.details ?? {})}`.toLowerCase();
       return blob.includes(q);
     });
-  }, [sourceEvents, kindFilter, eventQuery]);
+  }, [sourceEvents, kindFilter, eventQuery, hiddenOps]);
 
   const eventCounts = useMemo(() => {
     const counts: Record<string, number> = { file: 0, registry: 0, process: 0, network: 0 };
@@ -349,26 +414,29 @@ export function App() {
       {activeTab === 'events' && (
       <>
       {/* === EVENTS TAB BODY === */}
-      <main className="grid gap-4 p-4 md:p-6 lg:grid-cols-[minmax(320px,420px)_1fr]">
-        <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+      <main className="grid gap-4 p-3 sm:p-4 md:p-6 xl:grid-cols-[minmax(340px,420px)_1fr]">
+        <section className="min-w-0 space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 sm:p-4">
           <ProcessPicker processes={processes} busy={busy} onStart={startSession} />
           <SessionList
             sessions={sessions}
             selected={selectedSession}
             onSelect={setSelectedSession}
             onStop={stopSession}
+            onRestart={restartSession}
+            onPurge={purgeSession}
+            onCleanupAll={cleanupSessions}
           />
         </section>
 
-        <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+        <section className="min-w-0 space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 sm:p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h2 className="text-lg font-semibold">Live event stream</h2>
               <p className="truncate text-sm text-slate-400">
                 {selected?.exe_path ?? 'Select a session'}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <label className="flex items-center gap-1 text-xs text-slate-400">
                 <input
                   type="checkbox"
@@ -405,6 +473,13 @@ export function App() {
               </button>
             )}
           </div>
+
+          <OperationsFilter
+            events={sourceEvents}
+            hidden={hiddenOps}
+            setHidden={setHiddenOps}
+            enabledKinds={kindFilter}
+          />
 
           <input
             className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-cyan-500"

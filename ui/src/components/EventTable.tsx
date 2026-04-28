@@ -63,8 +63,12 @@ function EventTableInner({ events, autoScroll, onSelectEvent, selectedId }: Prop
     <div className="overflow-hidden rounded-2xl border border-slate-800">
       <div
         ref={parentRef}
-        className="max-h-[68vh] overflow-auto"
-        style={{ contain: 'strict' }}
+        className="overflow-auto"
+        // `contain: content` keeps the layout/paint isolation from the
+        // virtualizer rows but excludes `size` containment — `contain: strict`
+        // would force intrinsic height to 0 because no explicit height is set
+        // here, collapsing the table even though events exist.
+        style={{ contain: 'content', minHeight: '50vh', maxHeight: '68vh' }}
       >
         <div className="sticky top-0 z-10 grid grid-cols-[80px_60px_1fr] sm:grid-cols-[100px_70px_100px_2fr] md:grid-cols-[110px_80px_120px_70px_2fr] lg:grid-cols-[110px_80px_120px_80px_1fr_1fr] bg-slate-950 text-xs text-slate-400">
           <div className="px-3 py-2">Time</div>

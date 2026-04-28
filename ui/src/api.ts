@@ -19,7 +19,17 @@ export const queryEvents = async (
 ): Promise<EventsResponse> => {
   const qs = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+    if (v === undefined || v === null || v === '') return;
+    if (Array.isArray(v)) {
+      // FastAPI's `list[str] = Query(None)` expects repeated keys, e.g.
+      // ?operation=read&operation=write — append, don't join.
+      for (const item of v) {
+        if (item === undefined || item === null || item === '') continue;
+        qs.append(k, String(item));
+      }
+    } else {
+      qs.set(k, String(v));
+    }
   });
   return api<EventsResponse>(`/api/sessions/${sessionId}/events?${qs.toString()}`);
 };
@@ -27,16 +37,28 @@ export const queryEvents = async (
 export const exportUrl = (
   sessionId: string,
   format: 'csv' | 'jsonl',
-  filters: Record<string, string> = {},
+  filters: Record<string, string | string[] | undefined> = {},
 ) => {
-  const qs = new URLSearchParams({ format, ...filters }).toString();
-  return `/api/sessions/${sessionId}/export?${qs}`;
+  const qs = new URLSearchParams();
+  qs.set('format', format);
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === '') return;
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        if (item === undefined || item === null || item === '') continue;
+        qs.append(k, item);
+      }
+    } else {
+      qs.set(k, v);
+    }
+  });
+  return `/api/sessions/${sessionId}/export?${qs.toString()}`;
 };
 
 export const exportSession = (
   sessionId: string,
   format: 'csv' | 'jsonl',
-  filters: Record<string, string> = {},
+  filters: Record<string, string | string[] | undefined> = {},
 ) => exportUrl(sessionId, format, filters);
 
 export const fetchSession = (sessionId: string): Promise<Session> =>
