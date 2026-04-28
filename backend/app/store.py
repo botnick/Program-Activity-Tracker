@@ -394,7 +394,7 @@ class SessionStore:
     def get(self, session_id: str) -> dict[str, Any] | None:
         return self._sessions.get(session_id)
 
-    def list(self) -> list[dict[str, Any]]:
+    def all_sessions(self) -> list[dict[str, Any]]:
         return list(self._sessions.values())
 
     def mark_session_status(

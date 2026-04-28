@@ -12,8 +12,10 @@ This file just wires them together.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -32,11 +34,31 @@ from backend.app.store import store  # noqa: E402
 logger = logging.getLogger("activity_tracker")
 
 
+@contextlib.asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Replaces the deprecated ``@app.on_event`` decorators.
+
+    Startup work goes before ``yield``, shutdown work after. FastAPI 0.116+
+    raises a deprecation warning for the old API and is expected to remove
+    it altogether in a future minor — using ``lifespan`` keeps us forward-
+    compatible without code changes when we bump the version.
+    """
+    yield
+    try:
+        store.shutdown()
+    except OSError as exc:
+        logger.warning("store shutdown failed: %s", exc)
+
+
 def create_app() -> FastAPI:
     """Build and configure the FastAPI app. Importable for tests."""
     observability.configure_logging()
 
-    app = FastAPI(title="Activity Tracker", version="0.3.0")
+    app = FastAPI(
+        title="Activity Tracker",
+        version="0.3.0",
+        lifespan=lifespan,
+    )
 
     # Middleware order: Starlette wraps each successive add_middleware call
     # OUTSIDE the previous one, so the LAST registered middleware runs
@@ -62,16 +84,8 @@ def create_app() -> FastAPI:
     app.include_router(observability.router)
     app.include_router(api_routes.router)
 
-    # Orphan ETW session cleanup now runs inside the native binary itself
-    # (service/native/src/etw_session.cpp::SweepOrphans), so no startup hook
-    # is needed here.
-
-    @app.on_event("shutdown")
-    def _on_shutdown() -> None:
-        try:
-            store.shutdown()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("store shutdown failed: %s", exc)
+    # Orphan ETW session cleanup runs inside the native binary itself
+    # (service/native/src/etw_session.cpp::SweepOrphans).
 
     return app
 

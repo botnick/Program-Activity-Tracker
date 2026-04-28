@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import type { ActivityEvent, Kind, Session } from './types';
 import { KINDS } from './types';
@@ -29,8 +29,15 @@ import { ProviderToggle } from './components/ProviderToggle';
 import { ProcessTreeView } from './components/ProcessTreeView';
 import { RateSparkline } from './components/RateSparkline';
 import { ToastStack } from './components/ToastStack';
-import { LogsTab } from './components/LogsTab';
-import { McpHowToTab } from './components/McpHowToTab';
+// Tabs that are NOT the default landing view ship as separate chunks so the
+// initial bundle stays small. Vite picks them up automatically with dynamic
+// import.
+const LogsTab = lazy(() =>
+  import('./components/LogsTab').then((m) => ({ default: m.LogsTab })),
+);
+const McpHowToTab = lazy(() =>
+  import('./components/McpHowToTab').then((m) => ({ default: m.McpHowToTab })),
+);
 import { OperationsFilter } from './components/OperationsFilter';
 
 type TabId = 'events' | 'logs' | 'mcp';
@@ -352,6 +359,50 @@ export function App() {
     setSelectedEvent(null);
   }, []);
 
+  // Keyboard navigation for the events table + detail drawer:
+  //   Esc        close the drawer
+  //   ArrowDown  move selection one row down
+  //   ArrowUp    move selection one row up
+  //   /          focus the filter input
+  // Skipped if the user is currently typing in an input/textarea so we
+  // don't hijack their typing.
+  useEffect(() => {
+    if (activeTab !== 'events') return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const editable = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable;
+      if (e.key === 'Escape' && selectedEvent) {
+        e.preventDefault();
+        setSelectedEvent(null);
+        return;
+      }
+      if (editable) return;
+      if (e.key === '/') {
+        e.preventDefault();
+        document.querySelector<HTMLInputElement>('input[placeholder*="Filter"]')?.focus();
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (visibleEvents.length === 0) return;
+        const idx = selectedEvent
+          ? visibleEvents.findIndex((ev) => ev.id === selectedEvent.id)
+          : -1;
+        const nextIdx =
+          e.key === 'ArrowDown'
+            ? Math.min(visibleEvents.length - 1, idx + 1)
+            : Math.max(0, idx - 1);
+        const next = visibleEvents[nextIdx];
+        if (next) {
+          e.preventDefault();
+          setSelectedEvent(next);
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeTab, selectedEvent, visibleEvents]);
+
   const handleAutoScrollChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       setAutoScroll(e.target.checked);
@@ -567,9 +618,16 @@ export function App() {
       </>
       )}
 
-      {activeTab === 'logs' && <LogsTab />}
-
-      {activeTab === 'mcp' && <McpHowToTab />}
+      <Suspense
+        fallback={
+          <div className="mx-auto max-w-[1600px] px-4 py-10 text-center text-xs text-muted">
+            Loading…
+          </div>
+        }
+      >
+        {activeTab === 'logs' && <LogsTab />}
+        {activeTab === 'mcp' && <McpHowToTab />}
+      </Suspense>
 
       <footer className="mt-6 border-t border-line bg-surface/40 py-3">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-2 px-4 text-[11px] text-faint md:px-8">

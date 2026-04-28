@@ -322,7 +322,7 @@ def cleanup_sessions() -> dict[str, Any]:
 
 @router.get("/api/sessions")
 def list_sessions() -> dict[str, list[dict[str, Any]]]:
-    return {"items": store.list()}
+    return {"items": store.all_sessions()}
 
 
 @router.get("/api/sessions/{session_id}/events")

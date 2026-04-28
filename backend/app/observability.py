@@ -432,6 +432,18 @@ except ImportError:  # pragma: no cover
     generate_latest = None  # type: ignore[assignment]
 
 
+# Annotate as Optional so mypy is happy with the fallback `= None` branch
+# when prometheus_client isn't installed. Runtime callers always guard with
+# `is not None` checks below.
+_events_total: Counter | None = None
+_events_dropped_total: Counter | None = None
+_capture_errors_total: Counter | None = None
+_sessions_live: Gauge | None = None
+_subscribers_gauge: Gauge | None = None
+_file_object_cache_gauge: Gauge | None = None
+_tracked_pids_gauge: Gauge | None = None
+_request_duration: Histogram | None = None
+
 if _PROMETHEUS_AVAILABLE:
     _events_total = Counter(
         "tracker_events_total",
@@ -468,15 +480,6 @@ if _PROMETHEUS_AVAILABLE:
         ["path"],
         buckets=(0.005, 0.025, 0.1, 0.5, 2.5),
     )
-else:
-    _events_total = None
-    _events_dropped_total = None
-    _capture_errors_total = None
-    _sessions_live = None
-    _subscribers_gauge = None
-    _file_object_cache_gauge = None
-    _tracked_pids_gauge = None
-    _request_duration = None
 
 
 def observe_event(kind: str) -> None:
@@ -640,7 +643,7 @@ def _sessions_summary() -> tuple[int, int]:
     total = 0
     live = 0
     try:
-        sessions = _store.list()
+        sessions = _store.all_sessions()
         total = len(sessions)
         for session in sessions:
             status = (session.get("status") or "").lower()

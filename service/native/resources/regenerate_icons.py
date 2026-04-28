@@ -80,7 +80,12 @@ def render(size: int) -> Image.Image:
         draw.ellipse((x - psw // 2, y - psw // 2, x + psw // 2, y + psw // 2), fill=PULSE)
 
     # ---- downsample with antialiasing ----------------------------------------
-    return img.resize((size, size), Image.LANCZOS)
+    # Pillow >=10 renamed Image.LANCZOS to Image.Resampling.LANCZOS;
+    # keep both branches so the script runs on either side.
+    resample = getattr(
+        getattr(Image, "Resampling", Image), "LANCZOS", None
+    ) or getattr(Image, "LANCZOS", None) or 1
+    return img.resize((size, size), resample)
 
 
 def main() -> int:

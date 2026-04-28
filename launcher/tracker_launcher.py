@@ -207,10 +207,20 @@ def split_ansi(text: str) -> list[tuple[str, list[str]]]:
 class BackendProcess:
     """Wraps a uvicorn subprocess and pumps its stdout to a callback."""
 
-    def __init__(self, on_line: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        on_line: Callable[[str], None],
+        on_unexpected_exit: Callable[[int], None] | None = None,
+    ) -> None:
         self._on_line = on_line
+        # Fired with the exit code when the subprocess exits WITHOUT the
+        # caller having asked it to stop. Lets the launcher auto-restart
+        # uvicorn after a crash (OOM / unhandled exception inside FastAPI).
+        self._on_unexpected_exit = on_unexpected_exit
         self._proc: subprocess.Popen[bytes] | None = None
         self._threads: list[threading.Thread] = []
+        # Toggled by stop() so _pump knows the exit was intentional.
+        self._intentional_stop = False
 
     @property
     def running(self) -> bool:
@@ -223,6 +233,7 @@ class BackendProcess:
     def start(self, python: str, root: Path, port: int) -> None:
         if self.running:
             return
+        self._intentional_stop = False
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         env.setdefault("PYTHONIOENCODING", "utf-8")
@@ -269,15 +280,28 @@ class BackendProcess:
         for raw in self._proc.stdout:
             try:
                 line = raw.decode("utf-8", errors="replace")
-            except Exception:
+            except UnicodeDecodeError:
                 line = repr(raw)
             self._on_line(line)
-        self._on_line("\n[backend exited with code %s]\n" % self._proc.returncode)
+        rc = self._proc.returncode
+        self._on_line(f"\n[backend exited with code {rc}]\n")
+        # Fire the unexpected-exit hook if the user didn't ask to stop AND
+        # the process died with a non-graceful code. The launcher uses this
+        # to restart uvicorn after a crash.
+        if not self._intentional_stop and rc not in (0, None):
+            cb = self._on_unexpected_exit
+            if cb is not None:
+                try:
+                    cb(rc)
+                except Exception:  # noqa: BLE001
+                    # Callback raising shouldn't crash the pump thread.
+                    pass
 
     def stop(self, timeout: float = 5.0) -> None:
         if not self.running:
             return
         assert self._proc is not None
+        self._intentional_stop = True
         try:
             self._proc.terminate()
             try:
@@ -285,7 +309,7 @@ class BackendProcess:
             except subprocess.TimeoutExpired:
                 self._proc.kill()
                 self._proc.wait(timeout=timeout)
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             pass
 
 
@@ -1151,11 +1175,20 @@ class TrackerApp:
         # In-flight guards — block rapid double-clicks on Start / Stop /
         # Restart that would race the backend subprocess and leave orphans.
         self._busy: set[str] = set()
+        # Auto-restart bookkeeping. Cap the number of consecutive crash
+        # restarts so we don't loop forever if uvicorn refuses to start
+        # (e.g. broken backend module). After the cap the launcher gives
+        # up and the user has to hit Start manually.
+        self._crash_restart_count = 0
+        self._crash_restart_cap = 3
 
         self._configure_root()
         self._build_layout()
 
-        self.backend = BackendProcess(on_line=self._on_backend_line)
+        self.backend = BackendProcess(
+            on_line=self._on_backend_line,
+            on_unexpected_exit=self._on_backend_crashed,
+        )
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._set_status("stopped")
@@ -1631,6 +1664,36 @@ class TrackerApp:
     def _on_backend_line(self, line: str) -> None:
         self.log_backend.append(line)
 
+    def _on_backend_crashed(self, exit_code: int) -> None:
+        """Auto-restart hook fired when uvicorn dies without a Stop click.
+
+        Called from the BackendProcess pump thread, so we marshal back to
+        the Tk main loop via after(0). Backs off exponentially per attempt
+        and gives up after `_crash_restart_cap` consecutive failures.
+        """
+        self._crash_restart_count += 1
+        attempt = self._crash_restart_count
+        cap = self._crash_restart_cap
+        if attempt > cap:
+            def _give_up() -> None:
+                self._set_status("error")
+                self._log_error(
+                    f"backend crashed (exit {exit_code}); auto-restart gave "
+                    f"up after {cap} attempt(s). click Start to retry.",
+                )
+                self._refresh_button_states()
+            self.root.after(0, _give_up)
+            return
+        delay_ms = 1000 * (2 ** (attempt - 1))  # 1s, 2s, 4s
+
+        def _restart() -> None:
+            self._log_warn(
+                f"backend crashed (exit {exit_code}); auto-restart "
+                f"attempt {attempt}/{cap} in {delay_ms // 1000}s.",
+            )
+            self.root.after(delay_ms, self._on_start)
+        self.root.after(0, _restart)
+
     # ---- one-time setup --------------------------------------------------
 
     def _ensure_setup(self) -> bool:
@@ -1805,10 +1868,13 @@ class TrackerApp:
             try:
                 with urllib.request.urlopen(url, timeout=1) as resp:
                     if resp.status == 200:
+                        # Backend ready -> the previous crash didn't repeat,
+                        # so clear the auto-restart streak.
+                        self._crash_restart_count = 0
                         self.root.after(0, lambda: self._set_status("running"))
                         self.root.after(0, lambda: self._log_info("backend ready."))
                         return
-            except Exception:
+            except (OSError, urllib.error.URLError):
                 pass
             time.sleep(0.5)
         self.root.after(0, lambda: self._set_status("error"))
@@ -1817,6 +1883,9 @@ class TrackerApp:
     def _on_stop(self) -> None:
         if "stop" in self._busy:
             return
+        # User-initiated stop clears the auto-restart streak so the next
+        # manual Start gets a fresh attempt budget.
+        self._crash_restart_count = 0
         self._busy.add("stop")
         self._set_buttons_enabled(False)
         if not self.backend.running:

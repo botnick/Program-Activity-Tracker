@@ -214,6 +214,9 @@ class CaptureService:
 
         def _reader() -> None:
             try:
+                # proc.stdout is guaranteed non-None: we passed
+                # stdout=subprocess.PIPE to Popen above. Assertion is for mypy.
+                assert proc.stdout is not None
                 ln = proc.stdout.readline()
                 line.append(ln)
             finally:
