@@ -351,8 +351,20 @@ void EventConsumer::HandleEvent(PEVENT_RECORD record) {
             unsigned long long parent_pid = 0;
             if (GetUInt(ev, L"ParentProcessID", parent_pid) ||
                 GetUInt(ev, L"ParentProcessId", parent_pid)) {
-                pids_.AddIfParentTracked(static_cast<DWORD>(parent_pid),
-                                         static_cast<DWORD>(payload_pid));
+                bool added = pids_.AddIfParentTracked(
+                    static_cast<DWORD>(parent_pid),
+                    static_cast<DWORD>(payload_pid));
+                if (added && cfg_.engine_file) {
+                    // Newly-tracked child may already have files open before
+                    // the kernel CreateFile events reach us. Seed the cache
+                    // with whatever's in its handle table right now so
+                    // immediate Read/Write events still resolve to a path.
+                    auto entries = EnumerateOpenFiles(
+                        static_cast<uint32_t>(payload_pid));
+                    if (!entries.empty()) {
+                        SeedFileObjectCache(entries);
+                    }
+                }
             }
         } else if (ev.event_id == 2) {
             pids_.Remove(relevant_pid);
@@ -442,10 +454,8 @@ void EventConsumer::HandleEvent(PEVENT_RECORD record) {
         if (fname && !fname->empty()) {
             path = translator_.Translate(*fname);
         }
-        if (path.empty()) {
-            if (!GetUInt(ev, L"FileObject", fo)) GetUInt(ev, L"FileKey", fo);
-            if (fo != 0) ResolveFileObject(fo, path);
-        }
+        if (!GetUInt(ev, L"FileObject", fo)) GetUInt(ev, L"FileKey", fo);
+        if (path.empty() && fo != 0) ResolveFileObject(fo, path);
         // Last-resort fallback: when both FileName and FileObject cache miss,
         // show the kernel handle pointer so the user can correlate events on
         // the same file even if it was opened before tracking started.
@@ -459,9 +469,20 @@ void EventConsumer::HandleEvent(PEVENT_RECORD record) {
         root.emplace_back("path", path.empty() ? JsonValue()
                                                : JsonValue(WideToUtf8(path)));
         root.emplace_back("target", JsonValue());
-        root.emplace_back("details", JsonValue(DecodeDetails(
-                                        ev, {L"FileName", L"OpenPath",
-                                             L"FilePath"})));
+        JsonObject details = DecodeDetails(
+            ev, {L"FileName", L"OpenPath", L"FilePath"});
+        if (fo != 0) {
+            char hex[32];
+            std::snprintf(hex, sizeof(hex), "0x%llx",
+                          static_cast<unsigned long long>(fo));
+            details.emplace_back("file_object_hex",
+                                 JsonValue(std::string(hex)));
+        }
+        if (!path.empty()) {
+            details.emplace_back("path_resolved",
+                                 JsonValue(WideToUtf8(path)));
+        }
+        root.emplace_back("details", JsonValue(std::move(details)));
     } else if (kind_w == L"registry") {
         std::wstring key_str;
         const std::wstring* key = GetString(ev, L"KeyName");
@@ -471,29 +492,38 @@ void EventConsumer::HandleEvent(PEVENT_RECORD record) {
 
         // Cache lookup when ETW didn't ship a name on this event.
         unsigned long long ko = 0;
-        if (key_str.empty()) {
-            if (!GetUInt(ev, L"KeyObject", ko)) GetUInt(ev, L"KeyHandle", ko);
-            if (ko != 0) ResolveKeyObject(ko, key_str);
-        }
+        if (!GetUInt(ev, L"KeyObject", ko)) GetUInt(ev, L"KeyHandle", ko);
+        if (key_str.empty() && ko != 0) ResolveKeyObject(ko, key_str);
         // Last-resort fallback so the user can correlate events on the same
         // KCB even when it was created before tracking started.
-        if (key_str.empty()) {
-            if (ko == 0) {
-                if (!GetUInt(ev, L"KeyObject", ko)) GetUInt(ev, L"KeyHandle", ko);
-            }
-            if (ko != 0) {
-                wchar_t buf[40];
-                std::swprintf(buf, sizeof(buf) / sizeof(buf[0]),
-                              L"[kcb 0x%llx]", ko);
-                key_str = buf;
-            }
+        if (key_str.empty() && ko != 0) {
+            wchar_t buf[40];
+            std::swprintf(buf, sizeof(buf) / sizeof(buf[0]),
+                          L"[kcb 0x%llx]", ko);
+            key_str = buf;
         }
         root.emplace_back("ppid", JsonValue());
         root.emplace_back("path", JsonValue());
         root.emplace_back("target",
                           key_str.empty() ? JsonValue()
                                           : JsonValue(WideToUtf8(key_str)));
-        root.emplace_back("details", JsonValue(DecodeDetails(ev, {})));
+        // Drop the raw name fields from `details` (they live in `target`
+        // already and are usually empty anyway after a cache hit). Replace
+        // KeyObject (signed-looking 64-bit int) with a hex form that's
+        // easier to match against handle dumps.
+        JsonObject details = DecodeDetails(
+            ev, {L"KeyName", L"RelativeName", L"BaseName"});
+        if (ko != 0) {
+            char hex[32];
+            std::snprintf(hex, sizeof(hex), "0x%llx",
+                          static_cast<unsigned long long>(ko));
+            details.emplace_back("key_object_hex", JsonValue(std::string(hex)));
+        }
+        if (!key_str.empty()) {
+            details.emplace_back("key_name_resolved",
+                                 JsonValue(WideToUtf8(key_str)));
+        }
+        root.emplace_back("details", JsonValue(std::move(details)));
     } else if (kind_w == L"process") {
         unsigned long long ppid_u = 0;
         long long ppid_v = 0;
