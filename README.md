@@ -4,12 +4,24 @@ Lightweight, free, open-source alternative to Procmon. Pick any running Windows 
 
 **Use it for:** debugging "what is this exe doing", malware triage, detecting hidden file writes, IO profiling, watching a child process tree, integrating live activity into AI-assisted workflows.
 
-**[Download the latest release →](https://github.com/botnick/Program-Activity-Tracker/releases)** (Windows 10/11 x64; no Python install required, just unzip and run `tracker.exe`)
+**[Download the latest release →](https://github.com/botnick/Program-Activity-Tracker/releases)** — Windows 10/11 x64. No Python install, no compiler, no internet on first run. Just unzip and double-click `tracker.exe`.
 
 ```
 target.exe + descendants ──ETW──▶ tracker_capture.exe ──stdout──▶ FastAPI + SQLite ──WS──▶ React UI
                                                                           └──HTTP──▶ MCP server ──▶ AI client
 ```
+
+## Quick start
+
+1. Download `ActivityTracker-vX.Y.Z.zip` from the [Releases page](https://github.com/botnick/Program-Activity-Tracker/releases).
+2. Extract anywhere (e.g. `C:\Tools\ActivityTracker\`).
+3. Right-click `tracker.exe` → **Run as administrator** (or double-click and accept the UAC prompt).
+4. Click **▶ Start** in the launcher. The browser opens at `http://127.0.0.1:8000` once the backend is ready.
+5. Pick a process from the picker → click **Start capture**.
+
+To stop everything cleanly: click **■ Stop** or close the launcher window. The launcher kills `tracker_capture.exe` and any stray ETW sessions on its way out.
+
+> **Optional one-time Defender exclusion** (the ETW capture binary occasionally trips Defender): run `scripts\setup-defender-exclusion.ps1` as admin from inside the extracted folder.
 
 ## Features
 
@@ -21,145 +33,6 @@ target.exe + descendants ──ETW──▶ tracker_capture.exe ──stdout─�
 - **MCP server** — 14 tools, 6 resources, 4 prompts over stdio. The "MCP How-To" tab in the UI has copy-paste configs for every supported client.
 - **SQLite WAL persistence** — sessions + events survive restarts; 30-day automatic retention sweep.
 - **Native-only ETW backend** — single C++ binary, no Python ETW fallback, no API hooks, no driver.
-
-## Two builds: release vs dev
-
-The repo ships in two flavours. **End users grab the release zip.** **Contributors clone the source.**
-
-| | Release zip (end user) | Dev / source (this repo) |
-|---|---|---|
-| What you need | nothing — just Win 10/11 + admin | Python 3.10+, Node 20+, Visual Studio 2022+ (C++), CMake, Ninja |
-| Entry point | `tracker.exe` (Tk GUI launcher) | `start.bat` |
-| Files in folder | `tracker.exe`, `python/` (bundled embedded interpreter + all deps), `backend/`, `service/native/build/tracker_capture.exe`, `ui/dist/`, `mcp/`, `.mcp.json`, `README.txt` | full source: C++, React TS, tests, bench, docs, CI |
-| Bundled Python? | yes | no — uses system Python |
-| First-run time | ~5 s (no pip, no compile) | ~5 min (compiles native binary + builds UI) |
-| Where to get it | [GitHub Releases](https://github.com/botnick/Program-Activity-Tracker/releases) (auto-built by `.github/workflows/release.yml`) | `git clone` |
-
-The release zip is **self-contained**: download → extract → run `tracker.exe`. No Python install on the user's machine, no internet on first run, no `.bat` files at all — `tracker.exe` is the only thing the user clicks.
-
-### Producing a release zip
-
-Locally (requires Python + Node + VS for the prerequisite builds):
-
-```cmd
-pwsh -ExecutionPolicy Bypass -File scripts\build-release.ps1
-:: → release\ActivityTracker-vX.Y.Z\  +  release\ActivityTracker-vX.Y.Z.zip
-:: (omits bundled Python and tracker.exe; for a full release, use the CI path below)
-```
-
-Public release on GitHub — push a `vX.Y.Z` tag and let CI do the heavy lifting:
-
-```cmd
-git tag v0.2.1
-git push origin v0.2.1
-```
-
-`release.yml` on `windows-latest` then:
-1. Builds `tracker_capture.exe` (cmake + VS 2022).
-2. Builds `ui/dist/` (`npm ci` + `npm run build`).
-3. Downloads `python-3.12.7-embed-amd64.zip`, patches `python312._pth` so `..` is on sys.path, bootstraps pip, and installs the runtime requirements + the `mcp_tracker` package into the embedded interpreter.
-4. Runs PyInstaller against `launcher/launcher.spec` to produce `tracker.exe` (UAC-elevated, embedded `tracker.ico`, ~30 MB).
-5. Calls `scripts/build-release.ps1 -SkipBuild -PythonEmbedDir … -LauncherExe …` to assemble the folder + zip.
-6. Attaches the zip to a GitHub Release.
-
-The `.exe` is **never committed** to the repo — only `launcher/tracker_launcher.py` and `launcher/launcher.spec` are. CI builds the binary fresh on every tag.
-
-## Quick start (Windows, dev / source)
-
-### Prerequisites
-
-| | Minimum | Used for |
-|---|---|---|
-| Windows | 10 / 11 (x64) | ETW kernel providers |
-| Python | 3.10 | backend + MCP server |
-| Node.js | 20 | UI build (one-time) |
-| Visual Studio | 2022 / 2026 with C++ workload | native ETW binary build (one-time) |
-| Administrator | required | ETW capture sessions |
-
-### One-click launch
-
-Double-click **`start.bat`** at the repo root. The script:
-
-1. Self-elevates via UAC.
-2. Installs Python deps (first run only).
-3. Builds the native binary via `vswhere` + CMake (first run only).
-4. Builds the UI via `npm` (first run only).
-5. Starts the backend on `http://127.0.0.1:8000`.
-6. Opens the browser.
-
-When you see `admin: yes` (green pill, top-right) you're ready. Pick a process from the left column → events stream live.
-
-### One-time Defender exclusion (recommended)
-
-ETW monitoring binaries are commonly flagged by AV. Add an exclusion once:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-defender-exclusion.ps1
-```
-
-The script self-elevates and registers `service\native\build` + `tracker_capture.exe`. Optional — skip if Defender is disabled.
-
-## Portability — install on another PC
-
-The repo is fully self-contained. To clone-and-run on a fresh Windows machine:
-
-```cmd
-git clone <repo-url> C:\path\to\activity-tracker
-cd C:\path\to\activity-tracker
-:: Install prerequisites listed above
-start.bat
-```
-
-`start.bat` builds everything from source on first run. Nothing references the original repo's path; `BASE_DIR` is computed from `__file__` at runtime, the device map for path translation is built dynamically, and CMake / npm / pip pull all artifacts locally.
-
-For pinned reproducibility:
-
-```cmd
-python -m pip install -r requirements-lock.txt
-```
-
-## Repository layout
-
-```
-activity-tracker/
-├── start.bat / stop.bat / run-elevated.ps1   # one-click dev launchers (NOT shipped in release zip)
-├── bootstrap.ps1                             # full install + build (dev)
-├── launcher/
-│   ├── tracker_launcher.py                   # Tk GUI replacement for start.bat / stop.bat
-│   └── launcher.spec                         # PyInstaller spec → tracker.exe (CI-built)
-├── scripts/
-│   ├── build-release.ps1                     # assemble release/<name>/ + .zip
-│   ├── release-template/                     # README.txt + requirements.txt for the release
-│   └── setup-defender-exclusion.ps1          # one-time AV exclusion
-├── pyproject.toml / requirements-lock.txt    # Python deps
-│
-├── backend/app/                              # FastAPI control plane
-│   ├── main.py                               # app factory + middleware wiring
-│   ├── api_routes.py                         # REST + WebSocket router
-│   ├── store.py                              # SQLite WAL store + EventHub
-│   ├── observability.py                      # logging, /metrics, /api/health
-│   ├── icons.py                              # SHGetFileInfoW → PNG
-│   ├── config.py                             # pydantic-settings
-│   └── db/                                   # schema.sql + migrations runner
-│
-├── service/                                  # capture layer
-│   ├── capture_service.py                    # thin Python orchestrator
-│   └── native/                               # C++ ETW engine
-│       ├── CMakeLists.txt
-│       ├── src/                              # ETW session, TDH parser, etc.
-│       └── resources/                        # icon + .rc + regen script
-│
-├── ui/                                       # React 18 + TypeScript + Vite 6
-│   ├── public/favicon.ico
-│   └── src/                                  # components + hooks
-│
-├── mcp/                                      # standalone MCP server package
-│   └── src/mcp_tracker/                      # FastMCP tools/resources/prompts
-│
-├── tests/ + bench/                           # 99 backend + MCP tests, throughput bench
-├── docs/                                     # architecture, operations, threat-model, risks-th, manual-th
-└── CLAUDE.md                                 # guide for future Claude Code instances
-```
 
 ## API summary
 
@@ -184,41 +57,126 @@ activity-tracker/
 
 ## Configuration
 
-Every knob honors `TRACKER_*` environment variables (`pydantic-settings`). Selected ones:
+Every knob honours `TRACKER_*` environment variables (`pydantic-settings`). Selected ones:
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `TRACKER_BIND_HOST` | `127.0.0.1` | bind address (do not expose to LAN — no auth) |
 | `TRACKER_PORT` | `8000` | port |
-| `TRACKER_DB_PATH` | `events.db` | SQLite path (relative → repo root) |
+| `TRACKER_DB_PATH` | `events.db` | SQLite path (relative → release folder) |
 | `TRACKER_DB_RETENTION_DAYS` | `30` | drop events older than N days; `0` disables |
 | `TRACKER_FILE_OBJECT_CACHE_SIZE` | `100000` | LRU cap for FileObject→path map |
 | `TRACKER_LOG_DIR` | `logs` | log directory |
 | `TRACKER_LOG_LEVEL` | `INFO` | root log level |
 
-Set in CMD before launch: `set TRACKER_DB_RETENTION_DAYS=7 && start.bat`.
+Set in `cmd` before launching `tracker.exe`, e.g. `set TRACKER_DB_RETENTION_DAYS=7`. For a permanent change use System Properties → Environment Variables.
 
-## Development
+## MCP server (use with AI clients)
+
+The release zip ships an `mcp/` folder + `.mcp.json`; the bundled Python has `mcp_tracker` already installed. Open the **MCP How-To** tab in the web UI for copy-paste config snippets covering Claude Code, Claude Desktop, Cursor, Continue, Cline, Windsurf, Goose, MCP Inspector, and any generic MCP-stdio client. The backend (`tracker.exe`) must be running for tool calls to succeed.
+
+## Building from source
+
+For contributors only — end users should use the [release zip](https://github.com/botnick/Program-Activity-Tracker/releases).
+
+**Prerequisites:** Python 3.10+, Node 20+, Visual Studio 2022+ with C++ workload, CMake, Ninja, Administrator.
+
+```cmd
+git clone https://github.com/botnick/Program-Activity-Tracker
+cd Program-Activity-Tracker
+start.bat
+:: ↑ self-elevates via UAC, installs Python deps, builds the native binary
+::   via cmake, builds the UI via npm, runs uvicorn at 127.0.0.1:8000.
+::   Dev only — the release zip ships tracker.exe and contains no .bat files.
+```
+
+Other dev commands:
 
 ```cmd
 make test            :: pytest backend + MCP suites
 make lint            :: ruff + eslint
 make typecheck       :: mypy + tsc
-make build           :: vite build
-make dev             :: uvicorn --reload (non-admin: capture sessions return needs_admin)
-make run-elevated    :: same as start.bat
+make build           :: vite build (writes ui/dist/)
+make dev             :: uvicorn --reload (non-admin → capture sessions return needs_admin)
 ```
 
-`bench/throughput.py` measures end-to-end events/sec under a synthetic file workload. See `bench/README.md`.
+`bench/throughput.py` measures end-to-end events/sec under a synthetic file workload (see `bench/README.md`).
+
+### Producing a release zip
+
+A public GitHub Release is auto-built on every `vX.Y.Z` tag — push the tag and the workflow does the rest:
+
+```cmd
+git tag v0.2.1
+git push origin v0.2.1
+```
+
+`.github/workflows/release.yml` on `windows-latest` then:
+1. Builds `tracker_capture.exe` (cmake + VS 2022).
+2. Builds `ui/dist/` (`npm ci` + `npm run build`).
+3. Downloads `python-3.12.7-embed-amd64.zip`, patches `python312._pth` (adds `..` and uncomments `import site`), bootstraps pip, installs the runtime requirements + `mcp_tracker` into the embedded interpreter.
+4. Runs PyInstaller against `launcher/launcher.spec` to produce `tracker.exe` (UAC-elevated, embedded `tracker.ico`, ~30 MB).
+5. Calls `scripts/build-release.ps1 -SkipBuild -PythonEmbedDir … -LauncherExe …` to assemble `release/ActivityTracker-vX.Y.Z/` + `.zip`.
+6. `softprops/action-gh-release@v2` attaches the zip to a GitHub Release.
+
+To produce a local **partial** zip (no bundled Python, no `tracker.exe` — for dev smoke-testing only):
+
+```cmd
+pwsh -ExecutionPolicy Bypass -File scripts\build-release.ps1
+:: → release\ActivityTracker-vX.Y.Z\  +  release\ActivityTracker-vX.Y.Z.zip
+```
+
+`tracker.exe` and `tracker_capture.exe` are **never committed** to the repo. CI builds them fresh on every release run.
+
+## Repository layout
+
+```
+activity-tracker/
+├── start.bat / stop.bat                       # dev one-click launchers (NOT in release zip)
+├── launcher/
+│   ├── tracker_launcher.py                    # Tk GUI source — built into release/tracker.exe by CI
+│   └── launcher.spec                          # PyInstaller spec
+├── scripts/
+│   ├── build-release.ps1                      # assemble release/<name>/ + .zip
+│   ├── release-template/                      # README.txt + requirements.txt for the release
+│   └── setup-defender-exclusion.ps1           # one-time AV exclusion
+├── pyproject.toml / requirements-lock.txt     # Python deps
+│
+├── backend/app/                               # FastAPI control plane
+│   ├── main.py / api_routes.py / store.py
+│   ├── observability.py                       # logging, /metrics, /api/health
+│   ├── icons.py                               # SHGetFileInfoW → PNG
+│   ├── config.py                              # pydantic-settings
+│   └── db/                                    # schema.sql + migrations runner
+│
+├── service/                                   # capture layer
+│   ├── capture_service.py                     # Python ↔ native subprocess bridge
+│   └── native/                                # C++ ETW engine
+│       ├── CMakeLists.txt
+│       ├── src/                               # ETW session, TDH parser, path translator
+│       └── resources/                         # icon + .rc
+│
+├── ui/                                        # React 18 + TypeScript + Vite 6
+│   └── src/                                   # App.tsx (Events / Logs / MCP How-To), components, hooks
+│
+├── mcp/                                       # standalone MCP server package
+│   └── src/mcp_tracker/                       # FastMCP tools / resources / prompts
+│
+├── tests/ + bench/                            # 99 backend + MCP tests, throughput bench
+├── docs/                                      # architecture, operations, threat-model, risks-th, manual-th
+├── .github/workflows/                         # ci.yml (lint + test) + release.yml (auto-release on tag)
+├── README.md                                  # this file
+└── CLAUDE.md                                  # internal architecture / invariants reference
+```
 
 ## Documentation
 
 | File | What it covers |
 |---|---|
-| `docs/manual-th.md` | full Thai user guide (install → daily use → troubleshooting → MCP) |
+| `docs/manual-th.md` | full Thai user guide (install → daily use → MCP → troubleshooting) |
 | `docs/architecture.md` | concurrency model + storage + diagram |
 | `docs/operations.md` | running as a Windows service, Prometheus scraping, troubleshooting |
-| `docs/threat-model.md` | trust boundaries, what attacks the design defends against |
+| `docs/threat-model.md` | trust boundaries + what attacks the design defends against |
 | `docs/risks-th.md` | full risk register with mitigations (Thai) |
 
 ## License

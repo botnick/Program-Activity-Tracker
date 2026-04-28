@@ -8,17 +8,45 @@
 
 ## 1. สิ่งที่ต้องมีก่อนใช้งาน
 
+มี 2 ทางเลือก: **(A)** โหลด release zip มาใช้เลย หรือ **(B)** clone source มา build เอง
+
+### A. ใช้ release zip (แนะนำสำหรับผู้ใช้ทั่วไป)
+
 | รายการ | เวอร์ชันขั้นต่ำ | หมายเหตุ |
 |---|---|---|
 | Windows | 10 / 11 (x64) | ETW เปิดมากับระบบ |
-| Python | 3.10 ขึ้นไป | ติ๊ก "Add to PATH" ตอนติดตั้ง (หรือใช้ `py` launcher ก็ได้) |
-| Node.js | 20 ขึ้นไป | สำหรับ build UI ครั้งแรก |
-| Visual Studio 2022/2026 | C++ workload | สำหรับ build native ETW binary ครั้งแรก |
 | สิทธิ์ Admin | จำเป็น | ETW kernel providers ต้องการ Administrator |
+
+ไม่ต้องลง Python / Node.js / Visual Studio — bundle มาในซิปแล้ว
+
+### B. Build จาก source (สำหรับ developer)
+
+| รายการ | เวอร์ชันขั้นต่ำ |
+|---|---|
+| Windows | 10 / 11 (x64) |
+| Python | 3.10 ขึ้นไป (ติ๊ก "Add to PATH" ตอนติดตั้ง) |
+| Node.js | 20 ขึ้นไป |
+| Visual Studio 2022+ | C++ workload |
+| Administrator | จำเป็น |
 
 ---
 
-## 2. เริ่มใช้งานครั้งแรก (One-Click)
+## 2. เริ่มใช้งานครั้งแรก
+
+### 2.A วิธี release zip (one-click)
+
+1. โหลด `ActivityTracker-vX.Y.Z.zip` จาก [GitHub Releases](https://github.com/botnick/Program-Activity-Tracker/releases)
+2. แตก zip ไปที่ไหนก็ได้ (เช่น `C:\Tools\ActivityTracker`)
+3. **ดับเบิลคลิก `tracker.exe`** ในโฟลเดอร์ที่แตก
+4. Windows ถาม UAC → กด **Yes**
+5. หน้าต่าง GUI เปิดมา → กดปุ่ม **▶ Start**
+   - tracker.exe จะ spawn backend uvicorn เป็น subprocess
+   - เบราว์เซอร์จะเปิด `http://127.0.0.1:8000` อัตโนมัติเมื่อพร้อม
+6. เลือก process จาก process picker → กด **Start capture**
+
+ปิดระบบ: กดปุ่ม **■ Stop** ในโปรแกรม หรือปิดหน้าต่าง tracker.exe (มันจะ cleanup tracker_capture.exe + ETW sessions ให้อัตโนมัติ)
+
+### 2.B วิธี source / dev (one-click)
 
 1. เปิดโฟลเดอร์โปรเจกต์
 2. **ดับเบิลคลิก `start.bat`**
@@ -32,6 +60,13 @@
 5. เห็นแถบสีเขียว `admin: yes` ที่มุมบนขวา = พร้อม
 
 ปิดระบบ: ปิดหน้าต่าง CMD หรือดับเบิลคลิก `stop.bat`
+
+### 2.C ฟีเจอร์ใน tracker.exe (release เท่านั้น)
+
+- **Capture monitor tab** — เห็น pid / uptime / ETW session ของ `tracker_capture.exe`, KPI 8 ตัว (events/sec, total, tracked pids, cache, CPU, RAM, threads, handles), live sparkline 60 วินาที (events/sec / CPU / RAM), per-kind bar chart (file / registry / process / network)
+- **Backend / Events / Errors / Native log tabs** — live tail พร้อม ANSI color, search box, auto-scroll, save / clear / copy
+- **Start / Stop / Restart buttons** + Open browser shortcut + Open folder shortcut
+- **F5** = restart, **Ctrl+Q** = quit, **Ctrl+F** = search, **Ctrl+L** = clear, **Ctrl+S** = save logs
 
 ### 2.1 ตั้ง Defender exclusion (ครั้งเดียว แนะนำ)
 
@@ -144,29 +179,25 @@ python -m pip install -r requirements-lock.txt
 
 ---
 
-## 4. ติดตั้ง MCP server ให้ Claude ใช้
+## 4. ใช้ MCP server กับ AI client
 
-ระบบมี MCP server (`activity-tracker-mcp`) 14 tools / 6 resources / 4 prompts
-ที่ Claude Code / Claude Desktop เรียกใช้ได้ผ่าน stdio
+ระบบมี MCP server (`activity-tracker-mcp`) — 14 tools / 6 resources / 4 prompts ผ่าน stdio
+ใช้ได้กับ AI client ทุกตัวที่ implement MCP standard:
 
-### 4.1 Claude Code
+- Claude Code, Claude Desktop
+- Cursor IDE
+- Continue (VS Code / JetBrains extension)
+- Cline (VS Code extension)
+- Windsurf (Codeium IDE)
+- Goose (Block / Square)
+- Zed editor
+- MCP Inspector (debug)
 
-ไฟล์ `.mcp.json` มีอยู่แล้วในโฟลเดอร์โปรเจกต์ — Claude Code อ่านอัตโนมัติ
-พิมพ์ `/mcp` ใน Claude Code เพื่อดู tools
+**วิธี config สำหรับแต่ละ client มีให้ครบใน Tab "MCP How-To" บนเว็บ UI** (มีปุ่ม Copy ให้กด) — ดูตอนเปิด `tracker.exe` แล้วกดเข้า browser
 
-| Tool หลัก ๆ | ใช้ทำอะไร |
-|---|---|
-| `list_processes` | ดู process ที่รันอยู่ |
-| `start_session` | เริ่ม track |
-| `query_events` | ค้น event แบบ filter |
-| `search_events` | substring search |
-| `tail_events` | poll-based live tail |
-| `summarize_session` | สรุปกิจกรรมทั้ง session (counts/top paths/pids/time bounds) |
-| `export_session` | export เป็นไฟล์ลง Downloads |
+### 4.1 Quick start (ทั่วไป)
 
-### 4.2 Claude Desktop
-
-แก้ `%APPDATA%\Claude\claude_desktop_config.json`:
+ทุก client ใช้ shape JSON เดียวกัน:
 
 ```json
 {
@@ -180,10 +211,27 @@ python -m pip install -r requirements-lock.txt
 }
 ```
 
-ก่อนใช้งาน: `python -m pip install -e .\mcp[dev]` ที่โฟลเดอร์โปรเจกต์
-แล้ว restart Claude Desktop
+ถ้าใช้ release zip → ใช้ python ที่ bundle มาให้แทน:
 
-### 4.3 ตัวอย่างคำสั่งกับ Claude
+```json
+"command": "C:\\path\\to\\release\\python\\python.exe"
+```
+
+### 4.2 Tools หลัก ๆ
+
+| Tool | ใช้ทำอะไร |
+|---|---|
+| `list_processes` | ดู process ที่รันอยู่ |
+| `start_session` | เริ่ม track โดยให้ pid หรือ exe_path |
+| `query_events` | filter + paginate event |
+| `search_events` | substring search |
+| `tail_events` | poll-based live tail |
+| `summarize_session` | สรุปกิจกรรม (counts / top paths / pids / time bounds) |
+| `export_session` | export CSV/JSONL ลง Downloads |
+| `get_capture_stats` | ETW stats per session |
+| `get_metrics` | raw Prometheus metrics |
+
+### 4.3 ตัวอย่าง prompt
 
 - *"ใช้ activity-tracker ดูว่า xdt.exe เขียนอะไรลง AppData บ้าง"*
 - *"summarize session ล่าสุด — มีไฟล์อะไรเปลี่ยนแปลง, registry ไหนถูกแก้"*

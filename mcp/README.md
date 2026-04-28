@@ -1,6 +1,8 @@
 # activity-tracker-mcp
 
-Standalone MCP (Model Context Protocol) server that exposes the Activity Tracker's HTTP API to Claude Code / Claude Desktop. Talks HTTP only — never imports the tracker's modules — so it can run from anywhere as long as the backend is reachable.
+Standalone MCP (Model Context Protocol) server that exposes the Activity Tracker's HTTP API to **any MCP-compatible AI client** — Claude Code, Claude Desktop, Cursor, Continue, Cline, Windsurf, Goose, Zed, MCP Inspector, plus generic stdio clients. Talks HTTP only — never imports the tracker's modules — so it can run from anywhere as long as the backend is reachable.
+
+> **The web UI ships an "MCP How-To" tab** with copy-paste config snippets per client. Open `tracker.exe` (release) or run the dev backend, then click **MCP How-To** in the top tab nav.
 
 ## Install
 

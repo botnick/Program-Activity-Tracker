@@ -114,7 +114,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pyinstaller psutil
-          pyinstaller launcher\launcher.spec --noconfirm --clean
+          # --distpath / --workpath: PyInstaller defaults to <cwd>/dist|build
+          # which would scatter outputs at the repo root. Pin them under
+          # launcher/ so build-release.ps1 finds the exe at a stable path.
+          pyinstaller launcher\launcher.spec --noconfirm --clean `
+              --distpath launcher\dist --workpath launcher\build
           if (-not (Test-Path 'launcher\dist\tracker.exe')) {
               throw 'tracker.exe was not produced'
           }
