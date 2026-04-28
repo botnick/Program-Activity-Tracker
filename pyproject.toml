@@ -1,10 +1,10 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "activity-tracker"
-version = "0.2.2"
+version = "0.2.3"
 description = "Windows activity tracker with ETW-based capture and FastAPI control plane."
 requires-python = ">=3.10"
 readme = "README.md"
