@@ -144,6 +144,21 @@ $uiDest = Join-Path $relDir "ui\dist"
 New-Item -ItemType Directory -Force -Path $uiDest | Out-Null
 Copy-Item (Join-Path $repoRoot "ui\dist\*") -Destination $uiDest -Recurse
 
+# --- copy mcp/ source + .mcp.json ----------------------------------------
+Write-Host "==> Copying mcp/ + .mcp.json" -ForegroundColor Cyan
+$mcpDest = Join-Path $relDir "mcp"
+New-Item -ItemType Directory -Force -Path $mcpDest | Out-Null
+Copy-Item (Join-Path $repoRoot "mcp\pyproject.toml") $mcpDest
+if (Test-Path (Join-Path $repoRoot "mcp\README.md")) {
+    Copy-Item (Join-Path $repoRoot "mcp\README.md") $mcpDest
+}
+$mcpSrcDest = Join-Path $mcpDest "src"
+New-Item -ItemType Directory -Force -Path $mcpSrcDest | Out-Null
+Copy-Item (Join-Path $repoRoot "mcp\src\*") -Destination $mcpSrcDest -Recurse -Exclude "__pycache__"
+Get-ChildItem -Path $mcpSrcDest -Recurse -Force -Directory -Filter "__pycache__" |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $repoRoot ".mcp.json") $relDir
+
 # --- copy release templates ----------------------------------------------
 Write-Host "==> Copying release templates" -ForegroundColor Cyan
 $tplDir = Join-Path $repoRoot "scripts\release-template"

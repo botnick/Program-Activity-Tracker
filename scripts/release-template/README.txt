@@ -49,10 +49,28 @@ You do NOT need: Visual Studio, CMake, Node.js, npm.
  stop.bat                  kills backend + native binary + ETW sessions
  README.txt                this file
  requirements.txt          Python runtime dependencies
+ .mcp.json                 MCP client config (optional)
  backend/                  FastAPI control plane (Python source)
  service/                  capture wrapper + native ETW binary
  ui/dist/                  pre-built web UI (HTML/JS/CSS)
+ mcp/                      optional MCP server (stdio, talks to backend HTTP)
  scripts/                  Defender exclusion helper (optional)
+
+------------------------------------------------------------
+ MCP server (optional)  /  ใช้กับ MCP-compatible client
+------------------------------------------------------------
+
+start.bat ติดตั้ง mcp_tracker ให้อัตโนมัติ (ถ้ามีโฟลเดอร์ mcp/)
+ไฟล์ .mcp.json อยู่ที่ root ของโฟลเดอร์นี้แล้ว — เปิดโฟลเดอร์นี้ใน
+MCP-compatible client (เช่น Claude Code) แล้วจะเห็น 14 tools ของ
+activity-tracker พร้อมใช้
+
+ถ้าจะใช้กับ MCP client ตัวอื่น ๆ ให้กำหนด config:
+    "command": "python"
+    "args":    ["-m", "mcp_tracker"]
+    "env":     {"MCP_TRACKER_URL": "http://127.0.0.1:8000"}
+
+backend (start.bat) ต้องรันอยู่ก่อน MCP จึงจะเรียกได้
 
 Files written at runtime (in this folder):
  events.db, events.db-wal, events.db-shm   captured events (SQLite)

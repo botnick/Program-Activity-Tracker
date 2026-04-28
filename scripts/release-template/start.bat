@@ -87,6 +87,14 @@ echo [..] Installing runtime dependencies (one-time, ~30 MB)...
 if errorlevel 1 goto :pip_failed
 %PYTHON% -m pip install -r "%CD%\requirements.txt"
 if errorlevel 1 goto :pip_failed
+
+REM MCP server is optional — install if the folder is present so MCP-compatible
+REM clients can pick up .mcp.json. Failure here is non-fatal.
+if exist "%CD%\mcp\pyproject.toml" (
+    echo [..] Installing MCP server ^(optional^)...
+    %PYTHON% -m pip install -e "%CD%\mcp"
+    if errorlevel 1 echo [WARN] MCP install failed; the backend will still run.
+)
 goto :deps_ok
 
 :pip_failed
