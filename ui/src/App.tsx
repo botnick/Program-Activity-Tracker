@@ -30,9 +30,10 @@ import { ProcessTreeView } from './components/ProcessTreeView';
 import { RateSparkline } from './components/RateSparkline';
 import { ToastStack } from './components/ToastStack';
 import { LogsTab } from './components/LogsTab';
+import { McpHowToTab } from './components/McpHowToTab';
 import { OperationsFilter } from './components/OperationsFilter';
 
-type TabId = 'events' | 'logs';
+type TabId = 'events' | 'logs' | 'mcp';
 
 export function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -356,6 +357,7 @@ export function App() {
   const toggleTree = useCallback(() => setShowTree((v) => !v), []);
   const showEventsTab = useCallback(() => setActiveTab('events'), []);
   const showLogsTab = useCallback(() => setActiveTab('logs'), []);
+  const showMcpTab = useCallback(() => setActiveTab('mcp'), []);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -396,6 +398,19 @@ export function App() {
             }`}
           >
             Logs
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'mcp'}
+            onClick={showMcpTab}
+            className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
+              activeTab === 'mcp'
+                ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-200'
+                : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-cyan-500/40 hover:text-cyan-200'
+            }`}
+          >
+            MCP How-To
           </button>
         </nav>
         {error && (
@@ -528,6 +543,8 @@ export function App() {
       )}
 
       {activeTab === 'logs' && <LogsTab />}
+
+      {activeTab === 'mcp' && <McpHowToTab />}
 
       <EventDetailDrawer event={selectedEvent} onClose={handleCloseDrawer} />
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
