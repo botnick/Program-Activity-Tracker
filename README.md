@@ -104,11 +104,19 @@ make dev             :: uvicorn --reload (non-admin → capture sessions return 
 
 ### Producing a release zip
 
-A public GitHub Release is auto-built on every `vX.Y.Z` tag — push the tag and the workflow does the rest:
+A public GitHub Release is auto-built on every `vX.Y.Z` tag. The fastest way to cut one is the helper script — it bumps `pyproject.toml`, commits, tags, and pushes in one go:
 
 ```cmd
-git tag v0.2.1
-git push origin v0.2.1
+pwsh -File scripts\bump-and-release.ps1            :: 0.2.1 -> 0.2.2
+pwsh -File scripts\bump-and-release.ps1 -Minor     :: 0.2.x -> 0.3.0
+pwsh -File scripts\bump-and-release.ps1 -Version 1.0.0
+```
+
+Or do it by hand:
+
+```cmd
+git tag v0.2.2
+git push origin v0.2.2
 ```
 
 `.github/workflows/release.yml` on `windows-latest` then:

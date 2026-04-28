@@ -242,17 +242,17 @@ python -m pip install -r requirements-lock.txt
 
 ## 5. แก้ไขปัญหา (Troubleshooting)
 
-### ❌ "Backend is not Administrator; ETW capture disabled"
+### Problem: "Backend is not Administrator; ETW capture disabled"
 
 **สาเหตุ**: รัน backend ด้วย user ปกติ
 **แก้**: ปิด backend แล้ว double-click `start.bat` ใหม่ (จะขอ UAC)
 
-### ❌ Session แสดง `capture: needs_admin` แม้ run ผ่าน start.bat
+### Problem: Session แสดง `capture: needs_admin` แม้ run ผ่าน start.bat
 
 **สาเหตุ**: UAC ถูก deny
 **แก้**: คลิกขวาที่ `start.bat` → **Run as administrator**
 
-### ❌ ไม่เห็น event ใด ๆ เลย
+### Problem: ไม่เห็น event ใด ๆ เลย
 
 **ตรวจสอบ**:
 1. แถบ admin มุมบนขวาเป็นสีเขียว `admin: yes` หรือยัง
@@ -261,7 +261,7 @@ python -m pip install -r requirements-lock.txt
 4. ดู `http://127.0.0.1:8000/metrics` ว่า `tracker_events_total > 0` ไหม
 5. ดู Tab Logs → stream `native` มี error อะไรไหม
 
-### ❌ Native binary missing — RuntimeError ตอน start session
+### Problem: Native binary missing — RuntimeError ตอน start session
 
 **สาเหตุ**: Visual Studio ไม่ได้ติดตั้ง C++ workload หรือ build ล้มเหลว
 **แก้**:
@@ -269,16 +269,16 @@ python -m pip install -r requirements-lock.txt
 2. ลบ `service\native\build` ทิ้ง
 3. รัน `start.bat` ใหม่ — มันจะ build ให้
 
-### ❌ Defender quarantine `tracker_capture.exe`
+### Problem: Defender quarantine `tracker_capture.exe`
 
 **แก้**: รัน `scripts\setup-defender-exclusion.ps1` (ข้อ 2.1)
 
-### ❌ Port 8000 ถูกใช้แล้ว
+### Problem: Port 8000 ถูกใช้แล้ว
 
 **แก้**: `stop.bat` ฆ่าทุก process บน port 8000 แล้วรัน `start.bat` ใหม่
 หรือเปลี่ยน port: `set TRACKER_PORT=8001 && start.bat`
 
-### ❌ UI ขึ้น "ui not built"
+### Problem: UI ขึ้น "ui not built"
 
 **แก้**: `cd ui && npm install && npm run build`
 
