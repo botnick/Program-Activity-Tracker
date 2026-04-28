@@ -94,19 +94,22 @@ jobs:
 
           # Embeddable Python's build-isolation env loses sight of its parent's
           # site-packages, so PEP-517 sdist builds (./mcp) fail with
-          # "Cannot import 'setuptools.build_meta'". Pre-installing setuptools
-          # + wheel and disabling build isolation sidesteps that.
+          # "Cannot import 'setuptools.build_meta'". Pre-install setuptools
+          # + wheel and disable build isolation to sidestep that.
           ./python-embed/python.exe -m pip install --no-warn-script-location 'setuptools>=68' wheel
 
-          # Install runtime deps + MCP package into the embeddable interpreter.
-          # NOTE: install MCP without -e (editable) — embeddable distros choke
-          # on .pth-based egg links. A regular install copies the package into
-          # site-packages, which is what we want for the release zip anyway.
-          ./python-embed/python.exe -m pip install --no-warn-script-location -r scripts/release-template/requirements.txt
-          ./python-embed/python.exe -m pip install --no-warn-script-location --no-build-isolation ./mcp
+          # Install runtime deps + MCP package in ONE pip command so the
+          # resolver evaluates every constraint together. Two separate
+          # installs let pip silently upgrade transitive deps (e.g. mcp[cli]
+          # pulled sse-starlette 3.x → starlette 1.0 → broke fastapi 0.115.6
+          # in v0.2.1). Combined install raises a hard error on any conflict.
+          ./python-embed/python.exe -m pip install --no-warn-script-location --no-build-isolation `
+              -r scripts/release-template/requirements.txt `
+              ./mcp
 
-          # Smoke check: every import the launcher needs at runtime.
-          ./python-embed/python.exe -c "import fastapi, uvicorn, psutil, pydantic_settings, prometheus_client, mcp_tracker; print('embedded python OK')"
+          # Smoke check: every import the launcher needs at runtime, plus a
+          # FastAPI import-time call that would fail under the bad starlette.
+          ./python-embed/python.exe -c "import fastapi, uvicorn, psutil, pydantic_settings, prometheus_client, mcp_tracker; from fastapi import APIRouter; APIRouter(); print('embedded python OK')"
 
       # ---- 4. tracker.exe via PyInstaller --------------------------------
       - name: Build tracker.exe
