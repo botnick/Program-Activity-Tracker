@@ -163,7 +163,7 @@ activity-tracker/
 │   └── src/mcp_tracker/                       # FastMCP tools / resources / prompts
 │
 ├── tests/ + bench/                            # 99 backend + MCP tests, throughput bench
-├── docs/                                      # architecture, operations, threat-model, risks-th, manual-th
+├── docs/                                      # architecture, operations, threat-model, manual-th
 ├── .github/workflows/                         # ci.yml (lint + test) + release.yml (auto-release on tag)
 ├── README.md                                  # this file
 └── CLAUDE.md                                  # internal architecture / invariants reference
@@ -177,7 +177,6 @@ activity-tracker/
 | `docs/architecture.md` | concurrency model + storage + diagram |
 | `docs/operations.md` | running as a Windows service, Prometheus scraping, troubleshooting |
 | `docs/threat-model.md` | trust boundaries + what attacks the design defends against |
-| `docs/risks-th.md` | full risk register with mitigations (Thai) |
 
 ## License
 

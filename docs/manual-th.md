@@ -301,7 +301,7 @@ activity-tracker/
 ├── mcp/                                      ← MCP server package
 │
 ├── tests/ + bench/                           ← 99 tests + throughput bench
-├── docs/                                     ← architecture / operations / threat-model / risks-th / manual-th
+├── docs/                                     ← architecture / operations / threat-model / manual-th
 └── CLAUDE.md                                 ← guide สำหรับ Claude Code
 ```
 
@@ -353,7 +353,7 @@ xdt.exe (target) ──┐
         └──────────────────────┘
 ```
 
-ดูเพิ่ม: `docs/architecture.md`, `docs/operations.md`, `docs/threat-model.md`, `docs/risks-th.md`
+ดูเพิ่ม: `docs/architecture.md`, `docs/operations.md`, `docs/threat-model.md`
 
 ---
 
