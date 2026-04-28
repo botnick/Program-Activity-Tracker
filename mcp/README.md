@@ -91,7 +91,7 @@ Prefix `MCP_TRACKER_`:
 | `MCP_TRACKER_TIMEOUT` | `10.0` | HTTP timeout seconds |
 | `MCP_TRACKER_DOWNLOAD_DIR` | `~/Downloads` | export destination |
 | `MCP_TRACKER_ALLOW_EMIT` | `0` | gate `emit_event` tool (`1` to enable) |
-| `MCP_TRACKER_TOKEN` | empty | bearer token (plumbed but unused — for future LAN use) |
+| `MCP_TRACKER_TOKEN` | empty | bearer token; required when the tracker backend was started with `TRACKER_AUTH_TOKEN` set. Sent as `Authorization: Bearer <token>` on every request. |
 | `MCP_TRACKER_LOG_LEVEL` | `INFO` | written to stderr only |
 
 ## Tests

@@ -16,10 +16,18 @@ target.exe + descendants ──ETW──▶ tracker_capture.exe ──stdout─�
 1. Download `ActivityTracker-vX.Y.Z.zip` from the [Releases page](https://github.com/botnick/Program-Activity-Tracker/releases).
 2. Extract anywhere (e.g. `C:\Tools\ActivityTracker\`).
 3. Right-click `tracker.exe` → **Run as administrator** (or double-click and accept the UAC prompt).
-4. Click **Start** in the launcher. The browser opens at `http://127.0.0.1:8000` once the backend is ready.
+4. Click **Start** in the launcher. The browser opens automatically at `http://127.0.0.1:8000?token=…` once the backend is ready — the SPA stores the token in `localStorage` and strips it from the address bar.
 5. Pick a process from the picker → click **Start capture**.
 
-To stop everything cleanly: click **Stop** or close the launcher window. The launcher kills `tracker_capture.exe` and any stray ETW sessions on its way out.
+To stop everything cleanly: click **Stop** or close the launcher window. The launcher kills `tracker_capture.exe` and any stray ETW sessions on its way out. If the backend crashes by itself, the launcher auto-restarts it up to 3 times with backoff.
+
+### Keyboard shortcuts (web UI)
+
+| Key | Action |
+|---|---|
+| `Esc` | close the event detail drawer |
+| `↑` / `↓` | move row selection in the events table |
+| `/` | focus the filter input |
 
 > **Optional one-time Defender exclusion** (the ETW capture binary occasionally trips Defender): run `scripts\setup-defender-exclusion.ps1` as admin from inside the extracted folder.
 
@@ -33,6 +41,11 @@ To stop everything cleanly: click **Stop** or close the launcher window. The lau
 - **MCP bridge** — 14 tools, 6 resources, 4 prompt templates over stdio. The "MCP How-To" tab in the UI has copy-paste configs for every supported client.
 - **SQLite WAL persistence** — sessions + events survive restarts; 30-day automatic retention sweep.
 - **Native-only ETW backend** — single C++ binary, no Python ETW fallback, no API hooks, no driver.
+- **Auto-restart on crash** — if `uvicorn` dies unexpectedly, the launcher backs off (1 s, 2 s, 4 s) and re-spawns up to 3 times before giving up.
+- **Keyboard navigation** — Esc closes the detail drawer, ↑/↓ moves the row selection, `/` focuses the filter.
+- **Backpressure aware** — when a slow WebSocket subscriber is dropped, the UI shows a toast so silent loss is visible.
+- **Optional bearer-token auth** — set `TRACKER_AUTH_TOKEN` and every `/api/*` and `/ws/*` request must carry it (header or `?token=`). The launcher generates a per-launch token automatically; manual users can override it.
+- **PID-explosion safe** — the native binary refuses to add a new descendant past 500 tracked PIDs (override with `--max-pids=N`), so a fork-bomb target can't blow up memory / cache.
 
 ## API summary
 
@@ -61,11 +74,13 @@ Every knob honours `TRACKER_*` environment variables (`pydantic-settings`). Sele
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `TRACKER_BIND_HOST` | `127.0.0.1` | bind address (do not expose to LAN — no auth) |
+| `TRACKER_BIND_HOST` | `127.0.0.1` | bind address (do not expose to LAN unless you also set `TRACKER_AUTH_TOKEN`) |
 | `TRACKER_PORT` | `8000` | port |
+| `TRACKER_AUTH_TOKEN` | empty | bearer token required on `/api/*` + `/ws/*` (empty disables auth — default) |
 | `TRACKER_DB_PATH` | `events.db` | SQLite path (relative → release folder) |
 | `TRACKER_DB_RETENTION_DAYS` | `30` | drop events older than N days; `0` disables |
-| `TRACKER_FILE_OBJECT_CACHE_SIZE` | `100000` | LRU cap for FileObject→path map |
+| `TRACKER_DB_RETENTION_CHECK_MINUTES` | `60` | how often the retention thread sweeps |
+| `TRACKER_FILE_OBJECT_CACHE_SIZE` | `100000` | LRU cap for FileObject → path map |
 | `TRACKER_LOG_DIR` | `logs` | log directory |
 | `TRACKER_LOG_LEVEL` | `INFO` | root log level |
 

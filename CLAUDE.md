@@ -37,13 +37,21 @@ ui/src/  (React 18, Tailwind 3, virtualized via @tanstack/react-virtual)
 
 launcher/  (Tk GUI, packaged into release/tracker.exe by PyInstaller)
   ├── tracker_launcher.py     replaces start.bat / stop.bat in the release zip
-  │   - self-elevates via UAC
+  │   - self-elevates via UAC; embedded uac_admin manifest
   │   - prefers <root>/python/python.exe (bundled embeddable interpreter)
-  │   - spawns uvicorn as a subprocess; pumps stdout into ANSI-coloured Text widget
-  │   - Capture monitor tab: psutil + /api/health + /metrics polled at 1 Hz; KPI grid,
-  │     events/sec / CPU / RAM sparklines, per-kind bar chart
+  │   - generates per-launch secrets.token_urlsafe(32), injects
+  │     TRACKER_AUTH_TOKEN env into uvicorn, opens browser at ?token=
+  │     (UI hoists to localStorage, strips URL bar)
+  │   - spawns uvicorn as a subprocess; pumps stdout into ANSI-coloured Text
+  │   - auto-restart on unexpected exit: 1 s / 2 s / 4 s backoff, cap 3,
+  │     streak resets on first successful /api/health
+  │   - Capture monitor tab: psutil + /api/health + /metrics polled at 1 Hz;
+  │     KPI grid (events/sec, total, tracked pids, file-cache, key-cache,
+  │     CPU, RAM, threads), live sparklines, per-kind bar chart
   │   - Backend / Events / Errors / Native log tabs (file-tail + ANSI parser)
   │   - logman -ets for ETW orphan cleanup (mirror stop.bat)
+  │   - background update check on startup; "vX.Y.Z available" badge in
+  │     header on hit, silent on offline failure
   └── launcher.spec           PyInstaller one-file spec; uac_admin=True; embeds tracker.ico
 ```
 
@@ -122,26 +130,30 @@ The launcher .exe is **never committed** — only `launcher/tracker_launcher.py`
 ## Tests
 
 ```cmd
-python -m pytest tests        :: backend (59 tests + 1 admin-skip)
+python -m pytest tests        :: backend (66 tests + 1 admin-skip)
 python -m pytest mcp/tests    :: MCP server (40 tests)
 python -m ruff check backend service tests launcher bench
-python -m mypy backend service          :: continue-on-error in CI
+python -m mypy backend service          :: STRICT in CI — no continue-on-error
 cd ui && npm run typecheck && npm run lint && npm run build
 ```
 
-The admin-gated test (`tests/test_native_smoke_admin.py`) skips on non-admin shells. Run it from an elevated prompt to verify real ETW capture.
+The admin-gated test (`tests/test_native_smoke_admin.py`) skips on non-admin shells. Run it from an elevated prompt to verify real ETW capture. `tests/test_auth_middleware.py` exercises the optional bearer-token gate without needing the native binary.
 
 ## Critical invariants
 
-1. **Native binary is the sole ETW backend.** Phase 9 deleted pywintrace. If `tracker_capture.exe` is missing, `CaptureService.start()` raises with build instructions. `start.bat` auto-builds via `vswhere`.
+1. **Native binary is the sole ETW backend.** If `tracker_capture.exe` is missing, `CaptureService.start()` raises with build instructions. `start.bat` auto-builds via `vswhere`.
 2. **Filter is by PID, not by path.** Every path on every drive — AppData, Documents, D:\, network shares — is captured. The UI search box does client-side substring filtering only; never trim the underlying capture.
 3. **Hello-sentinel handshake** between Python wrapper and C++ binary catches wire-format drift (`SUPPORTED_PROTOCOL_VERSION = "1.0"`). Bumping either side without the other fails `start()` cleanly.
 4. **PID-reuse protection** via `OpenProcess` + `GetProcessTimes`: if a tracked PID is reused by an unrelated process, its events are dropped.
-5. **Log streams are routed by logger name.** Don't add a new file handler ad-hoc; use `_attach_stream_handler(...)` in `observability.py`.
-6. **`backend/app/main.py:BASE_DIR = parents[2]`** — moving `main.py` breaks UI / native binary path resolution. Same for `Path(__file__).resolve().parents[1]` in `service/capture_service.py`.
-7. **CORS is locked to localhost origins only.** Do not relax `cors_origins()` without explicit user approval — there is no auth.
-8. **DB retention sweep runs in the writer thread.** Don't add long-running DB ops there; they block the next batch flush.
-9. **No `.bat` files in the release zip.** `tracker.exe` (built by `release.yml`, never committed) is the only entry point users see. `start.bat` / `stop.bat` exist in the repo for dev convenience only.
-10. **No `.exe` is committed.** `*.exe` is gitignored. CI builds `tracker_capture.exe` (cmake) and `tracker.exe` (PyInstaller) fresh on every release run.
-11. **Embeddable Python ignores `PYTHONPATH`.** The release.yml step that bootstraps `python-embed/` MUST add `..` to `pythonXX._pth` so `backend.*` and `service.*` resolve when the bundled python runs uvicorn. Don't skip that step.
-12. **Markdown stays in sync.** Whenever code, workflow, release pipeline, MCP surface, env vars, install path, or entry point changes, update `README.md` + `CLAUDE.md` + `mcp/README.md` + `docs/*.md` + `scripts/release-template/README.txt` in the same commit.
+5. **PID soft cap** (`PidFilter::kDefaultMaxPids = 500`). The native binary refuses to add new descendants past the cap and emits a one-shot stderr warning. Override with `--max-pids=N`.
+6. **Log streams are routed by logger name.** Don't add a new file handler ad-hoc; use `_attach_stream_handler(...)` in `observability.py`.
+7. **`backend/app/main.py:BASE_DIR = parents[2]`** — moving `main.py` breaks UI / native binary path resolution. Same for `Path(__file__).resolve().parents[1]` in `service/capture_service.py`.
+8. **Lifespan, not `@app.on_event`.** Shutdown work belongs in the `lifespan` async context manager in `main.py`. FastAPI 0.116+ has deprecated `on_event`.
+9. **Auth is opt-in.** `AuthMiddleware` is wired but `settings.auth_token` is empty by default. When set, the middleware exempts `/`, `/favicon.ico`, `/assets/*`, `/metrics`, `/api/health` (for SPA load + scrapers). The launcher generates a per-launch `secrets.token_urlsafe(32)`; honour an inherited `TRACKER_AUTH_TOKEN` so power users can pin a stable token. CORS still locks origins to localhost regardless.
+10. **DB retention runs in its own thread.** Sweeps go through `_retention_loop` with its own SQLite connection (WAL allows concurrent writers across connections), so a multi-million-row DELETE no longer pauses event INSERTs. Don't put retention back inside `_writer_loop`.
+11. **No long-running calls on the ETW consumer thread.** v0.2.5 regressed by calling `EnumerateOpenFiles()` synchronously in the event handler — system-wide handle scan blocked the consumer for ~200 ms, kernel ETW buffers filled, sessions died after 5–15 s. Keep `HandleEvent` and its callees O(1) per event. The FileObject + KeyObject caches are mutex-protected hash lookups (~1 µs); anything heavier needs to live on its own thread.
+12. **No `.bat` files in the release zip.** `tracker.exe` (built by `release.yml`, never committed) is the only entry point users see. `start.bat` / `stop.bat` exist in the repo for dev convenience only.
+13. **No `.exe` is committed.** `*.exe` is gitignored. CI builds `tracker_capture.exe` (cmake) and `tracker.exe` (PyInstaller) fresh on every release run.
+14. **Embeddable Python ignores `PYTHONPATH`.** The `release.yml` step that bootstraps `python-embed/` MUST add `..` to `pythonXX._pth` so `backend.*` and `service.*` resolve when the bundled python runs uvicorn. Don't skip that step.
+15. **`pyproject.toml` has no UTF-8 BOM.** `bump-and-release.ps1` writes via `[System.IO.File]::WriteAllLines` with `UTF8Encoding(false)` because PowerShell 5.1's `Set-Content -Encoding UTF8` adds a BOM and pip's tomli rejects it.
+16. **Markdown stays in sync.** Whenever code, workflow, release pipeline, MCP surface, env vars, install path, or entry point changes, update `README.md` + `CLAUDE.md` + `mcp/README.md` + `docs/*.md` + `scripts/release-template/README.txt` in the same commit.

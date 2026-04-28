@@ -63,10 +63,20 @@
 
 ### 2.C ฟีเจอร์ใน tracker.exe (release เท่านั้น)
 
-- **Capture monitor tab** — เห็น pid / uptime / ETW session ของ `tracker_capture.exe`, KPI 8 ตัว (events/sec, total, tracked pids, cache, CPU, RAM, threads, handles), live sparkline 60 วินาที (events/sec / CPU / RAM), per-kind bar chart (file / registry / process / network)
+- **Capture monitor tab** — เห็น pid / uptime / ETW session ของ `tracker_capture.exe`, KPI 8 ตัว (events/sec, total events, tracked pids, file cache, key cache, CPU%, RAM, threads), live sparkline 60 วินาที (events/sec / CPU / RAM), per-kind bar chart (file / registry / process / network)
 - **Backend / Events / Errors / Native log tabs** — live tail พร้อม ANSI color, search box, auto-scroll, save / clear / copy
 - **Start / Stop / Restart buttons** + Open browser shortcut + Open folder shortcut
-- **F5** = restart, **Ctrl+Q** = quit, **Ctrl+F** = search, **Ctrl+L** = clear, **Ctrl+S** = save logs
+- **F5** = restart, **Ctrl+Q** = quit, **Ctrl+F** = search ในหน้า logs, **Ctrl+L** = clear, **Ctrl+S** = save logs
+- **Auto-restart on crash** — ถ้า uvicorn crash โดยไม่ได้กด Stop tracker.exe จะ restart ให้ 3 ครั้ง (backoff 1s / 2s / 4s) — เห็นข้อความ `auto-restart attempt N/3` ใน log ตอน crash
+- **Update check** — ตอนเปิด tracker.exe จะเช็ค GitHub Releases ครั้งเดียว ถ้ามีเวอร์ชันใหม่จะมี badge ขึ้น "vX.Y.Z available" ที่ header (คลิกเพื่อเปิดหน้า releases) ถ้าออฟไลน์เงียบไม่ block อะไร
+- **Per-launch auth token** — tracker.exe สร้าง token ใหม่ทุกครั้งที่เปิด ส่งไปกับ URL เปิดเบราว์เซอร์ (`?token=...`) — UI เก็บใน localStorage แล้วลบจาก URL bar — ทุก API/WS call แนบ Bearer header ให้อัตโนมัติ
+
+### 2.D ฟีเจอร์บนเว็บ UI
+
+- **Esc** ปิด event detail drawer
+- **↑ / ↓** เลือนการเลือกใน event table
+- **/** focus ที่ filter
+- **Toast เตือน** เมื่อ backend ตัด WebSocket subscriber ที่ช้าทิ้ง — รู้ว่า events lagging ไม่ silent
 
 ### 2.1 ตั้ง Defender exclusion (ครั้งเดียว แนะนำ)
 
@@ -312,14 +322,20 @@ activity-tracker/
 
 | ตัวแปร | Default | ความหมาย |
 |---|---|---|
-| `TRACKER_BIND_HOST` | `127.0.0.1` | host ที่ฟัง (อย่าตั้ง 0.0.0.0 — ไม่มี auth) |
+| `TRACKER_BIND_HOST` | `127.0.0.1` | host ที่ฟัง (อย่าตั้ง 0.0.0.0 ถ้าไม่ได้ตั้ง `TRACKER_AUTH_TOKEN`) |
 | `TRACKER_PORT` | `8000` | port |
+| `TRACKER_AUTH_TOKEN` | empty | bearer token บังคับใน `/api/*` + `/ws/*` (ค่าว่าง = ปิด auth — ค่า default) |
 | `TRACKER_DB_PATH` | `events.db` | path SQLite |
 | `TRACKER_DB_RETENTION_DAYS` | `30` | ลบ event เก่ากว่า N วัน (`0` = ปิด retention) |
+| `TRACKER_DB_RETENTION_CHECK_MINUTES` | `60` | ความถี่ที่ retention thread sweep |
 | `TRACKER_EVENT_RING_SIZE` | `50000` | ขนาด ring buffer per session |
 | `TRACKER_FILE_OBJECT_CACHE_SIZE` | `100000` | LRU cap ของ FileObject→path map |
 | `TRACKER_LOG_DIR` | `logs` | โฟลเดอร์ log |
 | `TRACKER_LOG_LEVEL` | `INFO` | ระดับ log |
+
+**หมายเหตุเรื่อง auth:** ตอน user เปิด tracker.exe ปกติ ไม่ต้องตั้ง `TRACKER_AUTH_TOKEN` เอง — launcher generate token ใหม่ทุกครั้งและส่ง URL พร้อม `?token=...` ให้เบราว์เซอร์เอง  ถ้าตั้งเอง = pin token ค้าง stable (ทุกครั้งที่เปิดใช้ token เดิม) ใช้กับ MCP server ผ่าน `MCP_TRACKER_TOKEN`
+
+**Native binary CLI flags (ขั้นสูง):** `tracker_capture.exe --max-pids=N` ให้ override soft cap สำหรับ target ที่ spawn child เยอะมาก ๆ (default 500)
 
 ---
 
