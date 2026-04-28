@@ -26,7 +26,33 @@ Real-time Windows process activity tracker. Pick any running process (e.g. `xdt.
 - **SQLite WAL persistence**: sessions and events survive backend restarts; 30-day automatic retention sweep.
 - **Native-only ETW backend**: no Python ETW fallback to drift; `pywintrace` removed in Phase 9.
 
-## Quick start (Windows)
+## Two builds: release vs dev
+
+This repo ships in two flavours. **End users want the release zip.** **Contributors want the full source.**
+
+| | Release zip (end user) | Dev / source (this repo) |
+|---|---|---|
+| What you need | only Python 3.10+ | Python 3.10+, Node 20+, Visual Studio 2022+ with C++ workload, CMake, Ninja |
+| Files in folder | `start.bat`, `stop.bat`, `requirements.txt`, `README.txt`, pre-built `tracker_capture.exe`, pre-built `ui/dist/`, Python source | full repo: C++ source, UI source, tests, bench, docs, CI, build scripts |
+| First-run time | ~30 seconds (pip only) | ~5 minutes (compiles native binary + builds UI) |
+| Use case | install on any Windows PC and just run | hacking on the code |
+| Where to get it | GitHub Releases (auto-built by `.github/workflows/release.yml`) | `git clone` |
+
+To produce a release zip locally from this repo:
+
+```cmd
+pwsh -ExecutionPolicy Bypass -File scripts\build-release.ps1
+:: -> release\ActivityTracker-v0.2.0\  +  release\ActivityTracker-v0.2.0.zip
+```
+
+To cut a public release on GitHub: push a `vX.Y.Z` tag, `release.yml` runs on `windows-latest`, builds everything, and attaches the zip to a GitHub Release.
+
+```cmd
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+## Quick start (Windows, dev / source)
 
 ### Prerequisites
 

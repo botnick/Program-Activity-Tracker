@@ -21,6 +21,10 @@ dist/
 build/
 *.spec
 
+# Release packaging output (built by scripts/build-release.ps1 or CI)
+release/
+ActivityTracker-v*.zip
+
 # Runtime / data
 *.db
 *.db-wal
@@ -33,6 +37,7 @@ cache/
 # IDE
 .vscode/
 .idea/
+.claude/
 
 # OS
 Thumbs.db
