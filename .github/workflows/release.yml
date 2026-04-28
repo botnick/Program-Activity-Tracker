@@ -92,12 +92,18 @@ jobs:
           Invoke-WebRequest 'https://bootstrap.pypa.io/get-pip.py' -OutFile get-pip.py
           ./python-embed/python.exe get-pip.py --no-warn-script-location
 
+          # Embeddable Python's build-isolation env loses sight of its parent's
+          # site-packages, so PEP-517 sdist builds (./mcp) fail with
+          # "Cannot import 'setuptools.build_meta'". Pre-installing setuptools
+          # + wheel and disabling build isolation sidesteps that.
+          ./python-embed/python.exe -m pip install --no-warn-script-location 'setuptools>=68' wheel
+
           # Install runtime deps + MCP package into the embeddable interpreter.
           # NOTE: install MCP without -e (editable) — embeddable distros choke
           # on .pth-based egg links. A regular install copies the package into
           # site-packages, which is what we want for the release zip anyway.
           ./python-embed/python.exe -m pip install --no-warn-script-location -r scripts/release-template/requirements.txt
-          ./python-embed/python.exe -m pip install --no-warn-script-location ./mcp
+          ./python-embed/python.exe -m pip install --no-warn-script-location --no-build-isolation ./mcp
 
           # Smoke check: every import the launcher needs at runtime.
           ./python-embed/python.exe -c "import fastapi, uvicorn, psutil, pydantic_settings, prometheus_client, mcp_tracker; print('embedded python OK')"

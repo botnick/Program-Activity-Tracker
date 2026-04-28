@@ -1,30 +1,26 @@
-# Activity Tracker
+# Activity Tracker — real-time Windows process monitor (ETW + web UI)
 
-Real-time Windows process activity tracker. Pick any running process (e.g. `xdt.exe`) and watch every file open / read / write / delete, every registry key/value change, every TCP/UDP connection — and every descendant it spawns — stream live into a web UI. No DLL injection, no API hooks; pure ETW kernel observation, same level of visibility as Procmon / Sysmon.
+Lightweight, free, open-source alternative to Procmon. Pick any running Windows process and watch its file, registry, process, and network activity stream live into a browser. Pure ETW (no DLL injection, no hooks), single-binary capture engine in C++, FastAPI backend, React UI, and a built-in MCP server so AI clients (Claude Code / Claude Desktop / Cursor / Continue / Cline / Windsurf / Goose) can query and summarise sessions.
+
+**Use it for:** debugging "what is this exe doing", malware triage, detecting hidden file writes, IO profiling, watching a child process tree, integrating live activity into AI-assisted workflows.
+
+**[Download the latest release →](https://github.com/botnick/Program-Activity-Tracker/releases)** (Windows 10/11 x64; no Python install required, just unzip and run `tracker.exe`)
 
 ```
-┌─────────────────┐     ETW      ┌──────────────────────┐    JSON    ┌──────────────┐
-│ target.exe      │ ───events───▶│ tracker_capture.exe  │ ──stdout──▶│ FastAPI      │
-│  + descendants  │   (kernel)   │  (native C++)        │            │  + SQLite    │
-└─────────────────┘              └──────────────────────┘            └──────┬───────┘
-                                                                            │ WebSocket
-                                                                            ▼
-                                                                     ┌──────────────┐
-                                                                     │ React UI     │
-                                                                     │ /metrics     │
-                                                                     │ MCP server   │──▶ Claude
-                                                                     └──────────────┘
+target.exe + descendants ──ETW──▶ tracker_capture.exe ──stdout──▶ FastAPI + SQLite ──WS──▶ React UI
+                                                                          └──HTTP──▶ MCP server ──▶ AI client
 ```
 
-## What you get
+## Features
 
-- **Every path on every drive**: `C:\`, `D:\`, USB sticks, network shares (`\\server\share`). Drive letters resolved dynamically at startup via `QueryDosDeviceW`.
-- **Realtime UI**: virtualized table, rAF-batched ingestion (smooth at 1000+ events/sec), drawer detail view, CSV/JSONL export, per-kind sparkline.
-- **Process picker with real Windows icons** for every running .exe.
-- **Five log streams** (`events`, `requests`, `errors`, `native`, `tracker`) viewable + tailable inside the UI.
-- **MCP server** (`activity-tracker-mcp`) — 14 tools, 6 resources, 4 prompts over stdio. Works with any MCP-compatible client (Claude Code, Claude Desktop, Cursor, Continue, Cline, Windsurf, Goose, …). The web UI ships an "MCP How-To" tab with copy-paste config snippets per client.
-- **SQLite WAL persistence**: sessions and events survive backend restarts; 30-day automatic retention sweep.
-- **Native-only ETW backend**: no Python ETW fallback to drift; `pywintrace` removed in Phase 9.
+- **Every path on every drive** — `C:\`, `D:\`, USB, network shares (`\\server\share`). Drive map resolved at startup via `QueryDosDeviceW`.
+- **Real-time web UI** — virtualised table, rAF-batched render (smooth at 1 000+ events/sec), CSV/JSONL export, per-kind sparkline, detail drawer.
+- **Process picker** with the actual Windows icons.
+- **Capture monitor in `tracker.exe`** — live CPU / RAM / threads / handles for the native binary, events-per-second sparkline, per-kind bar chart.
+- **5 log streams** (`events`, `requests`, `errors`, `native`, `tracker`) tailable from inside the UI.
+- **MCP server** — 14 tools, 6 resources, 4 prompts over stdio. The "MCP How-To" tab in the UI has copy-paste configs for every supported client.
+- **SQLite WAL persistence** — sessions + events survive restarts; 30-day automatic retention sweep.
+- **Native-only ETW backend** — single C++ binary, no Python ETW fallback, no API hooks, no driver.
 
 ## Two builds: release vs dev
 
