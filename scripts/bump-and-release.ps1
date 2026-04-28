@@ -77,9 +77,12 @@ if (git tag --list "v$next") {
 }
 
 # --- bump version --------------------------------------------------------
-(Get-Content $pyproj) `
-    -replace ('^(\s*version\s*=\s*)"' + [regex]::Escape($current) + '"'), "`$1`"$next`"" |
-    Set-Content $pyproj -Encoding UTF8
+# PEP 621 toml parsers (pip's tomli) reject a UTF-8 BOM. PowerShell 5.1's
+# Set-Content -Encoding UTF8 writes WITH a BOM, so use the .NET overload
+# that takes an explicit no-BOM UTF8Encoding instead.
+$lines = Get-Content $pyproj
+$rewritten = $lines -replace ('^(\s*version\s*=\s*)"' + [regex]::Escape($current) + '"'), "`$1`"$next`""
+[System.IO.File]::WriteAllLines($pyproj, $rewritten, (New-Object System.Text.UTF8Encoding $false))
 
 # --- commit + tag + push -------------------------------------------------
 git add pyproject.toml

@@ -571,31 +571,20 @@ export function App() {
 
       {activeTab === 'mcp' && <McpHowToTab />}
 
-      <footer className="mt-6 border-t border-line bg-surface/60 py-4">
-        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 text-xs text-muted md:px-8">
-          <span>
-            Activity Tracker — open-source Windows process monitor.
-          </span>
-          <span className="flex items-center gap-2">
-            built by{' '}
-            <a
-              href="https://github.com/botnick"
-              target="_blank"
-              rel="noreferrer"
-              className="font-semibold text-ink underline-offset-2 hover:text-accent-hover hover:underline"
-            >
-              botnick
-            </a>
-            <span className="text-faint">·</span>
-            <a
-              href="https://github.com/botnick/Program-Activity-Tracker"
-              target="_blank"
-              rel="noreferrer"
-              className="hover:text-accent-hover"
-            >
-              github.com/botnick/Program-Activity-Tracker
-            </a>
-          </span>
+      <footer className="mt-6 border-t border-line bg-surface/40 py-3">
+        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-2 px-4 text-[11px] text-faint md:px-8">
+          <span>Activity Tracker</span>
+          <a
+            href="https://github.com/botnick/Program-Activity-Tracker"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 transition-colors hover:text-ink"
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor" aria-hidden>
+              <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.48 2 2 6.48 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.87 1.52 2.34 1.07 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.1.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.69 0 3.84-2.34 4.69-4.57 4.94.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12 22 6.48 17.52 2 12 2z" />
+            </svg>
+            botnick/Program-Activity-Tracker
+          </a>
         </div>
       </footer>
 

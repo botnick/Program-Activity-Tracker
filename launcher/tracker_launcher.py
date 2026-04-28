@@ -38,6 +38,10 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 APP_TITLE = "Activity Tracker"
+APP_VERSION = "0.2.3"
+APP_REPO = "botnick/Program-Activity-Tracker"
+APP_REPO_URL = f"https://github.com/{APP_REPO}"
+LATEST_RELEASE_API = f"https://api.github.com/repos/{APP_REPO}/releases/latest"
 DEFAULT_PORT = 8000
 HEALTH_PATH = "/api/health"
 METRICS_PATH = "/metrics"
@@ -1134,11 +1138,14 @@ class TrackerApp:
 
         self._set_status("stopped")
         self._refresh_admin_badge()
-        self._log_info("ready. click Start to launch the backend.")
+        self._log_info(f"v{APP_VERSION}  ·  ready. click Start to launch the backend.")
 
         # Bind global shortcuts.
         self.root.bind("<F5>", lambda _e: self._on_restart())
         self.root.bind("<Control-q>", lambda _e: self._on_close())
+
+        # Background update check — silently no-ops offline.
+        self._check_for_update_async()
 
     # ---- styling ----------------------------------------------------------
 
@@ -1169,9 +1176,12 @@ class TrackerApp:
     UI_FONT_TINY = ("Segoe UI Variable", 8)
 
     def _configure_root(self) -> None:
-        self.root.title(APP_TITLE)
+        self.root.title(f"{APP_TITLE}  v{APP_VERSION}")
         self.root.geometry("1180x740")
-        self.root.minsize(820, 520)
+        # Lower minsize so users can shrink the window aggressively. The Tk
+        # layout below uses pack with weighting + the action row wraps so
+        # nothing gets clipped at narrow widths.
+        self.root.minsize(560, 420)
 
         try:
             ico = self.root_path / "service" / "native" / "resources" / "tracker.ico"
@@ -1316,15 +1326,18 @@ class TrackerApp:
     # ---- layout -----------------------------------------------------------
 
     def _build_layout(self) -> None:
-        # ----- top header — app title left, status pill + meta pills right
+        # ----- top header — uses grid + weighted columns so the brand block
+        #       stays put on narrow widths while the status cluster wraps
+        #       cleanly to a second row instead of getting clipped.
         header = ttk.Frame(self.root, style="Header.TFrame")
         header.pack(side=tk.TOP, fill=tk.X)
+        header.columnconfigure(0, weight=1, minsize=200)
+        header.columnconfigure(1, weight=0)
 
-        # Brand block (icon-style square + title + subtitle)
+        # Brand block — column 0
         brand = ttk.Frame(header, style="Header.TFrame")
-        brand.pack(side=tk.LEFT, padx=(20, 12), pady=(16, 14))
+        brand.grid(row=0, column=0, sticky="w", padx=(16, 8), pady=(14, 12))
 
-        # A small accent square as a logo placeholder.
         logo = tk.Canvas(
             brand, width=28, height=28,
             bg=self.PALETTE["surface"], highlightthickness=0,
@@ -1334,32 +1347,38 @@ class TrackerApp:
         logo.create_rectangle(15, 4, 24, 13, fill="#7ee787", outline="")
         logo.create_rectangle(4, 15, 13, 24, fill="#d2a8ff", outline="")
         logo.create_rectangle(15, 15, 24, 24, fill="#f1e05a", outline="")
-        logo.pack(side=tk.LEFT, padx=(0, 12))
+        logo.pack(side=tk.LEFT, padx=(0, 10))
 
         title_block = ttk.Frame(brand, style="Header.TFrame")
         title_block.pack(side=tk.LEFT)
-        ttk.Label(title_block, text=APP_TITLE, style="Heading.TLabel").pack(anchor="w")
+        title_row = ttk.Frame(title_block, style="Header.TFrame")
+        title_row.pack(anchor="w")
+        ttk.Label(title_row, text=APP_TITLE, style="Heading.TLabel").pack(side=tk.LEFT)
         ttk.Label(
+            title_row, text=f"  v{APP_VERSION}", style="Faint.TLabel",
+        ).pack(side=tk.LEFT, padx=(0, 0), pady=(6, 0))
+        # update-available badge — populated by background fetch when we
+        # learn there's a newer release than APP_VERSION.
+        self.update_badge = ttk.Label(
+            title_row, text="", style="Faint.TLabel", cursor="hand2",
+        )
+        self.update_badge.pack(side=tk.LEFT, padx=(8, 0), pady=(6, 0))
+        self.update_badge.bind(
+            "<Button-1>", lambda _e: webbrowser.open(f"{APP_REPO_URL}/releases/latest")
+        )
+        self.subtitle = ttk.Label(
             title_block,
             text="Real-time Windows process activity — file · registry · process · network",
             style="Muted.TLabel",
-        ).pack(anchor="w", pady=(2, 0))
-
-        # Right cluster: status pill + admin + port
-        right = ttk.Frame(header, style="Header.TFrame")
-        right.pack(side=tk.RIGHT, padx=(8, 20), pady=(20, 18))
-
-        self.port_label = ttk.Label(
-            right, text=f"Port  {self.port}", style="Pill.TLabel"
         )
-        self.port_label.pack(side=tk.RIGHT, padx=4)
+        self.subtitle.pack(anchor="w", pady=(2, 0))
 
-        self.admin_label = ttk.Label(right, text="Admin · ?", style="Pill.TLabel")
-        self.admin_label.pack(side=tk.RIGHT, padx=4)
+        # Status / pills cluster — column 1, right-aligned
+        right = ttk.Frame(header, style="Header.TFrame")
+        right.grid(row=0, column=1, sticky="e", padx=(8, 16), pady=(18, 16))
 
-        # Status pill: animated dot + label.
         self.status_pill = ttk.Frame(right, style="Header.TFrame")
-        self.status_pill.pack(side=tk.RIGHT, padx=4)
+        self.status_pill.pack(side=tk.LEFT, padx=4)
         self.status_dot = tk.Canvas(
             self.status_pill, width=12, height=12,
             bg=self.PALETTE["surface"], highlightthickness=0,
@@ -1373,39 +1392,51 @@ class TrackerApp:
         )
         self.status_label.pack(side=tk.LEFT)
 
-        # Separator below header
+        self.admin_label = ttk.Label(right, text="Admin · ?", style="Pill.TLabel")
+        self.admin_label.pack(side=tk.LEFT, padx=4)
+        self.port_label = ttk.Label(
+            right, text=f"Port  {self.port}", style="Pill.TLabel"
+        )
+        self.port_label.pack(side=tk.LEFT, padx=4)
+
         ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(side=tk.TOP, fill=tk.X)
 
-        # ----- action row — primary CTA on left, secondary on right -----
-        actions = ttk.Frame(self.root, style="Toolbar.TFrame")
-        actions.pack(side=tk.TOP, fill=tk.X)
+        # ----- action row — single flex row, lets buttons wrap to next
+        #       row when the window is narrow. Implemented with grid +
+        #       <Configure> reflow so it works at any width.
+        self._actions_frame = ttk.Frame(self.root, style="Toolbar.TFrame")
+        self._actions_frame.pack(side=tk.TOP, fill=tk.X, padx=12, pady=8)
 
-        actions_left = ttk.Frame(actions, style="Toolbar.TFrame")
-        actions_left.pack(side=tk.LEFT, padx=20, pady=12)
         self.btn_start = ttk.Button(
-            actions_left, text="Start", style="Accent.TButton", command=self._on_start
+            self._actions_frame, text="Start", style="Accent.TButton", command=self._on_start
         )
-        self.btn_start.pack(side=tk.LEFT, padx=(0, 6))
-        self.btn_stop = ttk.Button(actions_left, text="Stop", command=self._on_stop)
-        self.btn_stop.pack(side=tk.LEFT, padx=4)
+        self.btn_stop = ttk.Button(
+            self._actions_frame, text="Stop", command=self._on_stop
+        )
         self.btn_restart = ttk.Button(
-            actions_left, text="Restart", command=self._on_restart
+            self._actions_frame, text="Restart", command=self._on_restart
         )
-        self.btn_restart.pack(side=tk.LEFT, padx=4)
+        self.btn_browser = ttk.Button(
+            self._actions_frame, text="Open in browser", command=self._on_open_browser
+        )
+        self.btn_folder = ttk.Button(
+            self._actions_frame, text="Open folder", command=self._on_open_folder
+        )
+        self.btn_about = ttk.Button(
+            self._actions_frame, text="About", command=self._on_about
+        )
+        self._action_buttons = [
+            self.btn_start, self.btn_stop, self.btn_restart,
+            self.btn_browser, self.btn_folder, self.btn_about,
+        ]
+        # Initial pack — left to right, fill horizontally so they don't squish.
+        for btn in self._action_buttons:
+            btn.pack(side=tk.LEFT, padx=4, pady=4)
+        # Reflow on resize: when there isn't room, hide the rightmost
+        # secondary actions (browser / folder / about) and surface them in
+        # the About dialog instead.
+        self._actions_frame.bind("<Configure>", self._reflow_actions)
 
-        actions_right = ttk.Frame(actions, style="Toolbar.TFrame")
-        actions_right.pack(side=tk.RIGHT, padx=20, pady=12)
-        ttk.Button(actions_right, text="About", command=self._on_about).pack(
-            side=tk.RIGHT, padx=4
-        )
-        ttk.Button(actions_right, text="Open folder", command=self._on_open_folder).pack(
-            side=tk.RIGHT, padx=4
-        )
-        ttk.Button(
-            actions_right, text="Open in browser", command=self._on_open_browser
-        ).pack(side=tk.RIGHT, padx=4)
-
-        # Separator between action row and tabs
         ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(side=tk.TOP, fill=tk.X)
 
         # ----- main tabs (capture monitor + per-stream log views) ---------
@@ -1433,44 +1464,21 @@ class TrackerApp:
         ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(side=tk.BOTTOM, fill=tk.X)
         footer = ttk.Frame(self.root, style="Toolbar.TFrame")
         footer.pack(side=tk.BOTTOM, fill=tk.X)
-        self.footer_label = ttk.Label(
+        self.footer_path = ttk.Label(
             footer,
             text=str(self.root_path),
-            style="Muted.TLabel",
+            style="Faint.TLabel",
             anchor="w",
         )
-        self.footer_label.pack(side=tk.LEFT, padx=20, pady=8)
+        self.footer_path.pack(side=tk.LEFT, padx=16, pady=7)
 
-        # Visible credit + source link, centred so it can't be missed.
-        credit = ttk.Frame(footer, style="Toolbar.TFrame")
-        credit.pack(side=tk.LEFT, expand=True, pady=8)
-        ttk.Label(
-            credit, text="by ", style="Faint.TLabel",
-        ).pack(side=tk.LEFT)
-        link = ttk.Label(
-            credit, text="botnick", style="Header.TLabel",
-            cursor="hand2",
+        # Right cluster: subtle GitHub link (just an icon + handle).
+        repo_link = ttk.Label(
+            footer, text=APP_REPO,
+            style="Faint.TLabel", cursor="hand2",
         )
-        link.pack(side=tk.LEFT)
-        link.bind("<Button-1>", lambda _e: webbrowser.open(
-            "https://github.com/botnick/Program-Activity-Tracker"
-        ))
-        ttk.Label(
-            credit,
-            text="  ·  github.com/botnick/Program-Activity-Tracker",
-            style="Faint.TLabel",
-            cursor="hand2",
-        ).pack(side=tk.LEFT)
-        for w in credit.winfo_children():
-            w.bind("<Button-1>", lambda _e: webbrowser.open(
-                "https://github.com/botnick/Program-Activity-Tracker"
-            ))
-
-        ttk.Label(
-            footer,
-            text="F5 restart  ·  Ctrl+F search  ·  Ctrl+L clear  ·  Ctrl+Q quit",
-            style="Faint.TLabel",
-        ).pack(side=tk.RIGHT, padx=20, pady=8)
+        repo_link.pack(side=tk.RIGHT, padx=(8, 16), pady=7)
+        repo_link.bind("<Button-1>", lambda _e: webbrowser.open(APP_REPO_URL))
 
     # ---- status ----------------------------------------------------------
 
@@ -1488,6 +1496,95 @@ class TrackerApp:
         # Whenever status changes, also re-derive Start / Stop / Restart so
         # the user can never click "Start" while the backend is up, etc.
         self._refresh_button_states()
+
+    def _reflow_actions(self, _event: tk.Event | None = None) -> None:
+        """Hide secondary action buttons when the frame is too narrow.
+
+        Tk's pack doesn't wrap, so without this the right-side buttons
+        get clipped on small windows. The user can still reach those
+        actions via the About dialog (which has links to the same
+        operations) or the keyboard shortcuts.
+        """
+        primary = [self.btn_start, self.btn_stop, self.btn_restart]
+        secondary = [self.btn_browser, self.btn_folder, self.btn_about]
+        try:
+            avail = self._actions_frame.winfo_width()
+        except (tk.TclError, AttributeError):
+            return
+        if avail < 50:
+            return  # not laid out yet
+
+        # Approximate widths from each button's reqwidth. pack() wraps every
+        # button at 4 px padx -> 8 px between buttons.
+        widths = []
+        total = 0
+        for btn in primary + secondary:
+            try:
+                w = btn.winfo_reqwidth() + 8
+            except tk.TclError:
+                w = 80
+            widths.append(w)
+            total += w
+        # If everything fits, show all.
+        if total <= avail:
+            for btn in primary + secondary:
+                if not btn.winfo_ismapped():
+                    btn.pack(side=tk.LEFT, padx=4, pady=4)
+            return
+        # Otherwise hide secondary buttons one by one from the right.
+        budget = sum(widths[: len(primary)])
+        for i, btn in enumerate(secondary):
+            w = widths[len(primary) + i]
+            if budget + w <= avail:
+                budget += w
+                if not btn.winfo_ismapped():
+                    btn.pack(side=tk.LEFT, padx=4, pady=4)
+            else:
+                if btn.winfo_ismapped():
+                    btn.pack_forget()
+
+    def _check_for_update_async(self) -> None:
+        """Background fetch of the latest release tag.
+
+        Hits api.github.com once at startup; if it answers and the tag is
+        newer than APP_VERSION, surfaces a clickable badge in the header.
+        Silently no-ops on any failure (offline, no DNS, rate limit) so the
+        app stays fully usable without internet.
+        """
+        def worker() -> None:
+            try:
+                req = urllib.request.Request(
+                    LATEST_RELEASE_API,
+                    headers={"User-Agent": f"{APP_TITLE}/{APP_VERSION}"},
+                )
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                tag = (data.get("tag_name") or "").lstrip("v")
+                if tag and self._semver_gt(tag, APP_VERSION):
+                    self.root.after(
+                        0, lambda: self.update_badge.configure(
+                            text=f"  ·  v{tag} available",
+                            foreground=self.PALETTE["accent_h"],
+                        )
+                    )
+            except Exception:
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @staticmethod
+    def _semver_gt(a: str, b: str) -> bool:
+        """Return True if `a` is strictly greater than `b` as a x.y.z tuple.
+        Non-numeric segments compare as 0 — good enough for our tag stream."""
+        def parse(v: str) -> tuple[int, ...]:
+            out = []
+            for p in v.split("."):
+                try:
+                    out.append(int(p.split("-")[0]))
+                except ValueError:
+                    out.append(0)
+            return tuple(out)
+        return parse(a) > parse(b)
 
     def _refresh_admin_badge(self) -> None:
         if is_admin():
@@ -1889,12 +1986,13 @@ class TrackerApp:
     def _on_about(self) -> None:
         messagebox.showinfo(
             APP_TITLE,
-            f"{APP_TITLE}\n\n"
-            f"Folder: {self.root_path}\n"
-            f"Port:   {self.port}\n"
-            f"Admin:  {'yes' if is_admin() else 'no'}\n"
-            f"Python: {self.python or 'not found'}\n\n"
-            "https://github.com/botnick/Program-Activity-Tracker",
+            f"{APP_TITLE}  v{APP_VERSION}\n\n"
+            f"Folder:  {self.root_path}\n"
+            f"Port:    {self.port}\n"
+            f"Admin:   {'yes' if is_admin() else 'no'}\n"
+            f"Python:  {self.python or 'not found'}\n\n"
+            f"{APP_REPO_URL}\n"
+            f"Releases: {APP_REPO_URL}/releases",
         )
 
     def _on_close(self) -> None:
