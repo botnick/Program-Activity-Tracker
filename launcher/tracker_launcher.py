@@ -38,13 +38,32 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 APP_TITLE = "Activity Tracker"
-APP_VERSION = "0.2.3"
+APP_VERSION_FALLBACK = "0.2.4"
 APP_REPO = "botnick/Program-Activity-Tracker"
 APP_REPO_URL = f"https://github.com/{APP_REPO}"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{APP_REPO}/releases/latest"
 DEFAULT_PORT = 8000
 HEALTH_PATH = "/api/health"
 METRICS_PATH = "/metrics"
+
+
+def app_version(root: Path | None = None) -> str:
+    """Read the version from the release-bundled VERSION file.
+
+    build-release.ps1 writes ``release/<name>/VERSION`` next to tracker.exe,
+    so the running app always reports the version it was built from. Dev
+    runs (no VERSION file) fall back to ``APP_VERSION_FALLBACK``.
+    """
+    if root is not None:
+        v = root / "VERSION"
+        if v.exists():
+            try:
+                txt = v.read_text(encoding="utf-8").strip()
+                if txt:
+                    return txt
+            except OSError:
+                pass
+    return APP_VERSION_FALLBACK
 
 KIND_COLORS = {
     "file": "#79c0ff",
@@ -1121,6 +1140,7 @@ class TrackerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root_path = app_root()
+        self.version = app_version(self.root_path)
         self.python = find_python(self.root_path)
         self.port = int(os.environ.get("TRACKER_PORT", str(DEFAULT_PORT)))
         self._setup_done = False
@@ -1138,7 +1158,7 @@ class TrackerApp:
 
         self._set_status("stopped")
         self._refresh_admin_badge()
-        self._log_info(f"v{APP_VERSION}  ·  ready. click Start to launch the backend.")
+        self._log_info(f"v{self.version}  ·  ready. click Start to launch the backend.")
 
         # Bind global shortcuts.
         self.root.bind("<F5>", lambda _e: self._on_restart())
@@ -1176,7 +1196,7 @@ class TrackerApp:
     UI_FONT_TINY = ("Segoe UI Variable", 8)
 
     def _configure_root(self) -> None:
-        self.root.title(f"{APP_TITLE}  v{APP_VERSION}")
+        self.root.title(f"{APP_TITLE}  v{self.version}")
         self.root.geometry("1180x740")
         # Lower minsize so users can shrink the window aggressively. The Tk
         # layout below uses pack with weighting + the action row wraps so
@@ -1355,7 +1375,7 @@ class TrackerApp:
         title_row.pack(anchor="w")
         ttk.Label(title_row, text=APP_TITLE, style="Heading.TLabel").pack(side=tk.LEFT)
         ttk.Label(
-            title_row, text=f"  v{APP_VERSION}", style="Faint.TLabel",
+            title_row, text=f"  v{self.version}", style="Faint.TLabel",
         ).pack(side=tk.LEFT, padx=(0, 0), pady=(6, 0))
         # update-available badge — populated by background fetch when we
         # learn there's a newer release than APP_VERSION.
@@ -1555,12 +1575,12 @@ class TrackerApp:
             try:
                 req = urllib.request.Request(
                     LATEST_RELEASE_API,
-                    headers={"User-Agent": f"{APP_TITLE}/{APP_VERSION}"},
+                    headers={"User-Agent": f"{APP_TITLE}/{self.version}"},
                 )
                 with urllib.request.urlopen(req, timeout=4) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                 tag = (data.get("tag_name") or "").lstrip("v")
-                if tag and self._semver_gt(tag, APP_VERSION):
+                if tag and self._semver_gt(tag, self.version):
                     self.root.after(
                         0, lambda: self.update_badge.configure(
                             text=f"  ·  v{tag} available",
@@ -1986,11 +2006,11 @@ class TrackerApp:
     def _on_about(self) -> None:
         messagebox.showinfo(
             APP_TITLE,
-            f"{APP_TITLE}  v{APP_VERSION}\n\n"
-            f"Folder:  {self.root_path}\n"
-            f"Port:    {self.port}\n"
-            f"Admin:   {'yes' if is_admin() else 'no'}\n"
-            f"Python:  {self.python or 'not found'}\n\n"
+            f"{APP_TITLE}  v{self.version}\n\n"
+            f"Folder:   {self.root_path}\n"
+            f"Port:     {self.port}\n"
+            f"Admin:    {'yes' if is_admin() else 'no'}\n"
+            f"Python:   {self.python or 'not found'}\n\n"
             f"{APP_REPO_URL}\n"
             f"Releases: {APP_REPO_URL}/releases",
         )
