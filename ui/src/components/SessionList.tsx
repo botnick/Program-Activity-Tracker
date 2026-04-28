@@ -40,6 +40,20 @@ function SessionRow({
       session.capture === 'failed');
   const canPurge = !!onPurge && !isLive;
 
+  // Per-row in-flight flags so a rapid second click is ignored. The buttons
+  // re-enable when the parent re-renders this row with fresh `session` data
+  // (deletes drop the row entirely; stops change `capture` and `isLive`).
+  const [busyAction, setBusyAction] = useState<null | 'stop' | 'purge' | 'restart'>(null);
+  const guard = (action: 'stop' | 'purge' | 'restart', fn: () => void) => {
+    if (busyAction) return;
+    setBusyAction(action);
+    try {
+      fn();
+    } finally {
+      window.setTimeout(() => setBusyAction(null), 600);
+    }
+  };
+
   return (
     <div
       className={`rounded-xl border px-3 py-2 text-sm ${
@@ -76,30 +90,41 @@ function SessionRow({
           <button
             type="button"
             title="Delete this session and its events from the DB"
+            disabled={busyAction === 'purge'}
             onClick={(e) => {
               e.stopPropagation();
-              onPurge!(session.session_id);
+              e.preventDefault();
+              guard('purge', () => onPurge!(session.session_id));
             }}
-            className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-400 hover:border-rose-500/60 hover:text-rose-300"
+            className="rounded-md border border-slate-700 bg-slate-900 p-1.5 text-slate-400 transition-colors hover:border-rose-500/60 hover:text-rose-300 disabled:opacity-40"
+            aria-label="Delete session"
           >
-            ✕
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M3 6h18" />
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              <path d="M19 6 17.5 20a2 2 0 0 1-2 1.8h-7a2 2 0 0 1-2-1.8L5 6" />
+            </svg>
           </button>
         )}
       </div>
       {isLive && (
         <button
-          onClick={() => onStop(session.session_id)}
-          className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 hover:border-rose-500/60 hover:text-rose-300"
+          type="button"
+          disabled={busyAction === 'stop'}
+          onClick={() => guard('stop', () => onStop(session.session_id))}
+          className="mt-2 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 transition-colors hover:border-rose-500/60 hover:text-rose-300 disabled:opacity-40"
         >
-          Stop
+          {busyAction === 'stop' ? 'Stopping…' : 'Stop'}
         </button>
       )}
       {canRestart && (
         <button
-          onClick={() => onRestart!(session)}
-          className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 hover:border-cyan-500/60 hover:text-cyan-200"
+          type="button"
+          disabled={busyAction === 'restart'}
+          onClick={() => guard('restart', () => onRestart!(session))}
+          className="mt-2 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 transition-colors hover:border-cyan-500/60 hover:text-cyan-200 disabled:opacity-40"
         >
-          Start new session for this exe
+          {busyAction === 'restart' ? 'Starting…' : 'Start new session for this exe'}
         </button>
       )}
     </div>

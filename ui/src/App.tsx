@@ -177,11 +177,21 @@ export function App() {
     [sessions, selectedSession],
   );
 
+  // Set when the user explicitly clears a session (delete / cleanup-all). For
+  // the next refresh we honour that intent and don't auto-pick the first item;
+  // otherwise rapid delete-then-refresh would re-select the just-deleted row's
+  // exe and the UI would look like the delete didn't take.
+  const skipAutoSelectRef = useRef(false);
+
   const refreshSessions = useCallback(async () => {
     const result = await api<{ items: Session[] }>('/api/sessions');
     setSessions(result.items);
     setSelectedSession((current) => {
       if (current) return current;
+      if (skipAutoSelectRef.current) {
+        skipAutoSelectRef.current = false;
+        return current;
+      }
       return result.items.length > 0 ? result.items[0].session_id : current;
     });
   }, []);
@@ -246,7 +256,9 @@ export function App() {
       try {
         await api(`/api/sessions/${sessionId}?purge=true`, { method: 'DELETE' });
         // If we just deleted the selected session, drop the selection so the
-        // event panel resets cleanly.
+        // event panel resets cleanly. Tell refreshSessions not to auto-pick
+        // the next remaining session — the user explicitly said "delete".
+        skipAutoSelectRef.current = true;
         setSelectedSession((current) => (current === sessionId ? '' : current));
         await refreshSessions();
         pushToast({ kind: 'info', message: 'Session deleted' });
@@ -263,6 +275,7 @@ export function App() {
         '/api/sessions/cleanup',
         { method: 'POST' },
       );
+      skipAutoSelectRef.current = true;
       // If the active selection got swept, drop it.
       setSelectedSession((current) =>
         result.ids.includes(current) ? '' : current,

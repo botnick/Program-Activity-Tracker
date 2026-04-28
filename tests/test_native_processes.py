@@ -89,9 +89,10 @@ def test_api_processes_uses_native_when_present(monkeypatch) -> None:
     from backend.app import main as main_mod
 
     fake_rows = [
+        # pid > 4 — handler filters out kernel pseudo-processes (pid 0/4).
         {
-            "pid": 1,
-            "ppid": 0,
+            "pid": 1234,
+            "ppid": 100,
             "name": "fake.exe",
             "exe": "C:\\fake.exe",
             "username": "X\\Y",

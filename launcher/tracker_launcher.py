@@ -1122,6 +1122,9 @@ class TrackerApp:
         self._setup_done = False
         self._log_tails: list[LogTail] = []
         self._poller: CaptureMetricsPoller | None = None
+        # In-flight guards — block rapid double-clicks on Start / Stop /
+        # Restart that would race the backend subprocess and leave orphans.
+        self._busy: set[str] = set()
 
         self._configure_root()
         self._build_layout()
@@ -1614,24 +1617,31 @@ class TrackerApp:
     # ---- button actions --------------------------------------------------
 
     def _on_start(self) -> None:
-        if self.backend.running:
-            self._log_warn("backend already running.")
+        if "start" in self._busy:
             return
-        if not self._ensure_setup():
-            self._set_status("error")
-            return
-        self._set_status("starting")
+        self._busy.add("start")
         try:
-            self.backend.start(self.python or "python", self.root_path, self.port)
-        except Exception as exc:
-            self._log_error(f"failed to start backend: {exc}")
-            self._set_status("error")
-            return
-        self._start_log_tails()
-        self._start_poller()
-        self._log_info(f"backend pid={self.backend.pid} on http://127.0.0.1:{self.port}")
-        # Poll /api/health for readiness, then mark Running.
-        threading.Thread(target=self._wait_until_ready, daemon=True).start()
+            self._set_buttons_enabled(False)
+            if self.backend.running:
+                self._log_warn("backend already running.")
+                return
+            if not self._ensure_setup():
+                self._set_status("error")
+                return
+            self._set_status("starting")
+            try:
+                self.backend.start(self.python or "python", self.root_path, self.port)
+            except Exception as exc:
+                self._log_error(f"failed to start backend: {exc}")
+                self._set_status("error")
+                return
+            self._start_log_tails()
+            self._start_poller()
+            self._log_info(f"backend pid={self.backend.pid} on http://127.0.0.1:{self.port}")
+            # Poll /api/health for readiness, then mark Running.
+            threading.Thread(target=self._wait_until_ready, daemon=True).start()
+        finally:
+            self.root.after(800, lambda: (self._busy.discard("start"), self._set_buttons_enabled(True)))
 
     def _wait_until_ready(self) -> None:
         import urllib.request
@@ -1654,21 +1664,29 @@ class TrackerApp:
         self.root.after(0, lambda: self._log_error("backend did not become ready."))
 
     def _on_stop(self) -> None:
+        if "stop" in self._busy:
+            return
+        self._busy.add("stop")
+        self._set_buttons_enabled(False)
         if not self.backend.running:
             self._cleanup_orphans()
             self._set_status("stopped")
+            self.root.after(600, lambda: (self._busy.discard("stop"), self._set_buttons_enabled(True)))
             return
         self._set_status("stopping")
         threading.Thread(target=self._stop_worker, daemon=True).start()
 
     def _stop_worker(self) -> None:
         self._log_info("stopping backend…")
-        self.backend.stop()
-        self._cleanup_orphans()
-        self._stop_log_tails()
-        self._stop_poller()
-        self.root.after(0, lambda: self._set_status("stopped"))
-        self.root.after(0, lambda: self._log_info("backend stopped."))
+        try:
+            self.backend.stop()
+            self._cleanup_orphans()
+            self._stop_log_tails()
+            self._stop_poller()
+            self.root.after(0, lambda: self._set_status("stopped"))
+            self.root.after(0, lambda: self._log_info("backend stopped."))
+        finally:
+            self.root.after(0, lambda: (self._busy.discard("stop"), self._set_buttons_enabled(True)))
 
     def _cleanup_orphans(self) -> None:
         # Mirror stop.bat: kill orphan tracker_capture.exe + any leftover
@@ -1705,15 +1723,37 @@ class TrackerApp:
             pass
 
     def _on_restart(self) -> None:
+        if "restart" in self._busy:
+            return
+        self._busy.add("restart")
+        self._set_buttons_enabled(False)
         threading.Thread(target=self._restart_worker, daemon=True).start()
 
     def _restart_worker(self) -> None:
-        if self.backend.running:
-            self.root.after(0, lambda: self._set_status("stopping"))
-            self.backend.stop()
-            self._stop_log_tails()
-            self._cleanup_orphans()
-        self.root.after(0, self._on_start)
+        try:
+            if self.backend.running:
+                self.root.after(0, lambda: self._set_status("stopping"))
+                self.backend.stop()
+                self._stop_log_tails()
+                self._cleanup_orphans()
+            self.root.after(0, self._on_start)
+        finally:
+            self.root.after(0, lambda: self._busy.discard("restart"))
+
+    def _set_buttons_enabled(self, enabled: bool) -> None:
+        """Disable / enable Start / Stop / Restart together so the user can't
+        spawn duplicate subprocesses by mashing buttons during a transition."""
+        state = "normal" if enabled else "disabled"
+        for btn in (
+            getattr(self, "btn_start", None),
+            getattr(self, "btn_stop", None),
+            getattr(self, "btn_restart", None),
+        ):
+            if btn is not None:
+                try:
+                    btn.configure(state=state)
+                except tk.TclError:
+                    pass
 
     # ---- capture-tab callbacks ----------------------------------------
 

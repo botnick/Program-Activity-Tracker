@@ -57,6 +57,13 @@ router = APIRouter()
 def _resolve_target(req: ProcessSelectRequest) -> tuple[int, str]:
     """Turn a request (pid or exe_path) into (pid, resolved_exe_path)."""
     if req.pid is not None:
+        if req.pid <= 4:
+            # pid 0 = System Idle Process, pid 4 = System (kernel) — neither
+            # can be an ETW capture target, and psutil.Process(0) raises.
+            raise HTTPException(
+                status_code=400,
+                detail=f"pid {req.pid} is a kernel pseudo-process and cannot be tracked",
+            )
         try:
             proc = psutil.Process(req.pid)
             exe = proc.exe() or req.exe_path or proc.name()
@@ -180,6 +187,10 @@ def list_processes() -> dict[str, Any]:
                 )
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
+    # Hide kernel pseudo-processes — System Idle Process (pid 0) and System
+    # (pid 4 on most builds) can never be ETW targets and trying to track
+    # them surfaces a confusing 404 from psutil.Process(0).
+    items = [it for it in items if (it.get("pid") or 0) > 4]
     items.sort(key=lambda x: (x.get("name") or "").lower())
     return {"items": items, "admin": is_admin()}
 
