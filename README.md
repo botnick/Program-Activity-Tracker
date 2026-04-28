@@ -173,10 +173,12 @@ activity-tracker/
 
 | File | What it covers |
 |---|---|
-| `docs/manual-th.md` | full Thai user guide (install → daily use → MCP → troubleshooting) |
-| `docs/architecture.md` | concurrency model + storage + diagram |
-| `docs/operations.md` | running as a Windows service, Prometheus scraping, troubleshooting |
-| `docs/threat-model.md` | trust boundaries + what attacks the design defends against |
+| [docs/manual-th.md](docs/manual-th.md) | full Thai user guide (install → daily use → MCP → troubleshooting) |
+| [docs/architecture.md](docs/architecture.md) | concurrency model + storage + diagram |
+| [docs/operations.md](docs/operations.md) | running as a Windows service, Prometheus scraping, troubleshooting |
+| [docs/threat-model.md](docs/threat-model.md) | trust boundaries + what attacks the design defends against |
+| [mcp/README.md](mcp/README.md) | MCP server: tools / resources / prompts / env vars |
+| [CLAUDE.md](CLAUDE.md) | internal architecture + invariants reference |
 
 ## License
 
