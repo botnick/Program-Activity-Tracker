@@ -359,78 +359,83 @@ export function App() {
   const showLogsTab = useCallback(() => setActiveTab('logs'), []);
   const showMcpTab = useCallback(() => setActiveTab('mcp'), []);
 
+  const tabs: { id: TabId; label: string; onClick: () => void }[] = [
+    { id: 'events', label: 'Events', onClick: showEventsTab },
+    { id: 'logs',   label: 'Logs',   onClick: showLogsTab },
+    { id: 'mcp',    label: 'MCP How-To', onClick: showMcpTab },
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800 px-4 py-3 md:px-6 md:py-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-semibold md:text-2xl">Activity Tracker</h1>
-            <p className="hidden text-sm text-slate-400 sm:block">
-              Realtime kernel ETW visibility — file, registry, process, network
-            </p>
+    <div className="min-h-screen bg-base text-ink">
+      <header className="sticky top-0 z-30 border-b border-line bg-surface/80 backdrop-blur-md">
+        <div className="mx-auto max-w-[1600px] px-4 md:px-8">
+          <div className="flex flex-wrap items-center justify-between gap-4 py-3 md:py-4">
+            <div className="flex items-center gap-3">
+              <div
+                className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-accent/30 to-kind-registry/20 ring-1 ring-line"
+                aria-hidden
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5 text-accent-hover" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14l6 6M14 20l6-6" />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-base font-semibold tracking-tight md:text-lg">Activity Tracker</h1>
+                <p className="hidden text-[12px] text-muted sm:block">
+                  Real-time Windows process activity — file · registry · process · network
+                </p>
+              </div>
+            </div>
+            <AdminBanner admin={admin} connected={connected} />
           </div>
-          <AdminBanner admin={admin} connected={connected} />
+          <AdminWarning admin={admin} />
+          <nav className="-mb-px flex items-center gap-1 overflow-x-auto" role="tablist" aria-label="Main tabs">
+            {tabs.map((t) => {
+              const isActive = activeTab === t.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={t.onClick}
+                  className={`relative px-4 py-2.5 text-[13px] font-medium transition-colors ${
+                    isActive ? 'text-accent-hover' : 'text-muted hover:text-ink'
+                  }`}
+                >
+                  {t.label}
+                  {isActive && (
+                    <span
+                      className="absolute inset-x-3 bottom-0 h-[2px] rounded-full bg-accent"
+                      aria-hidden
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </nav>
         </div>
-        <AdminWarning admin={admin} />
-        <nav className="mt-3 flex items-center gap-2" role="tablist" aria-label="Main tabs">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'events'}
-            onClick={showEventsTab}
-            className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
-              activeTab === 'events'
-                ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-200'
-                : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-cyan-500/40 hover:text-cyan-200'
-            }`}
-          >
-            Events
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'logs'}
-            onClick={showLogsTab}
-            className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
-              activeTab === 'logs'
-                ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-200'
-                : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-cyan-500/40 hover:text-cyan-200'
-            }`}
-          >
-            Logs
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'mcp'}
-            onClick={showMcpTab}
-            className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
-              activeTab === 'mcp'
-                ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-200'
-                : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-cyan-500/40 hover:text-cyan-200'
-            }`}
-          >
-            MCP How-To
-          </button>
-        </nav>
-        {error && (
-          <div className="mt-3 flex items-start justify-between gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-200">
+      </header>
+
+      {error && (
+        <div className="mx-auto max-w-[1600px] px-4 pt-3 md:px-8">
+          <div className="flex items-start justify-between gap-3 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger fade-in">
             <span className="flex-1">{error}</span>
             <button
               onClick={dismissError}
-              className="text-xs opacity-70 hover:opacity-100"
+              className="text-xs text-danger/80 hover:text-danger"
             >
               dismiss
             </button>
           </div>
-        )}
-      </header>
+        </div>
+      )}
 
       {activeTab === 'events' && (
       <>
       {/* === EVENTS TAB BODY === */}
-      <main className="grid gap-4 p-3 sm:p-4 md:p-6 xl:grid-cols-[minmax(340px,420px)_1fr]">
-        <section className="min-w-0 space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 sm:p-4">
+      <main className="mx-auto grid max-w-[1600px] gap-4 px-4 py-4 md:gap-5 md:px-8 md:py-6 xl:grid-cols-[minmax(340px,420px)_1fr]">
+        <section className="min-w-0 space-y-4 rounded-lg border border-line bg-surface/70 p-3 sm:p-4">
           <ProcessPicker processes={processes} busy={busy} onStart={startSession} />
           <SessionList
             sessions={sessions}
@@ -443,20 +448,21 @@ export function App() {
           />
         </section>
 
-        <section className="min-w-0 space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 sm:p-4">
+        <section className="min-w-0 space-y-4 rounded-lg border border-line bg-surface/70 p-3 sm:p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <h2 className="text-lg font-semibold">Live event stream</h2>
-              <p className="truncate text-sm text-slate-400">
+              <h2 className="text-base font-semibold tracking-tight">Live event stream</h2>
+              <p className="truncate text-[12px] text-muted">
                 {selected?.exe_path ?? 'Select a session'}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <label className="flex items-center gap-1 text-xs text-slate-400">
+              <label className="flex items-center gap-1.5 text-[11px] text-muted">
                 <input
                   type="checkbox"
                   checked={autoScroll}
                   onChange={handleAutoScrollChange}
+                  className="accent-accent"
                 />
                 follow
               </label>
@@ -482,7 +488,7 @@ export function App() {
               <button
                 onClick={refetchQuery}
                 disabled={queryLoading}
-                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-300 hover:border-cyan-500/60 hover:text-cyan-200 disabled:opacity-50"
+                className="btn text-xs"
               >
                 {queryLoading ? 'Loading…' : 'Refresh'}
               </button>
@@ -496,12 +502,18 @@ export function App() {
             enabledKinds={kindFilter}
           />
 
-          <input
-            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-cyan-500"
-            placeholder="filter by path, target, operation, or any detail"
-            value={eventQuery}
-            onChange={handleEventQueryChange}
-          />
+          <div className="relative">
+            <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              className="w-full rounded-lg border border-line bg-base py-2 pl-9 pr-3 text-sm placeholder:text-faint outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/30"
+              placeholder="Filter by path, target, operation, or detail…"
+              value={eventQuery}
+              onChange={handleEventQueryChange}
+            />
+          </div>
 
           <RateSparkline eventsRef={sourceEventsRef} />
 
@@ -512,25 +524,25 @@ export function App() {
             selectedId={selectedEvent?.id ?? null}
           />
 
-          <div className="flex items-center justify-between text-xs text-slate-500">
+          <div className="flex items-center justify-between text-[11px] text-faint">
             <span>
-              {visibleEvents.length} shown · {sourceEvents.length} total
+              {visibleEvents.length.toLocaleString()} shown · {sourceEvents.length.toLocaleString()} total
               {timeRange === 'live' ? ' (ring buffer)' : ' (queried)'}
             </span>
             <span>{selected ? `pid ${selected.pid}` : ''}</span>
           </div>
 
           {selected && (
-            <div className="rounded-2xl border border-slate-800 bg-slate-950">
+            <div className="rounded-lg border border-line bg-base">
               <button
                 onClick={toggleTree}
-                className="flex w-full items-center justify-between px-4 py-2 text-xs text-slate-400 hover:text-slate-200"
+                className="flex w-full items-center justify-between px-4 py-2 text-[12px] text-muted transition-colors hover:text-ink"
               >
                 <span>Process tree (pid {selected.pid})</span>
                 <span>{showTree ? '▾' : '▸'}</span>
               </button>
               {showTree && (
-                <div className="border-t border-slate-800 p-2">
+                <div className="border-t border-line p-2 fade-in">
                   <ProcessTreeView events={sourceEvents} rootPid={selected.pid} />
                 </div>
               )}

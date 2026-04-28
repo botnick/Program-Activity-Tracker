@@ -7,26 +7,30 @@ type Props = {
 
 function AdminBannerInner({ admin, connected }: Props) {
   return (
-    <div className="flex items-center gap-3 text-sm">
+    <div className="flex items-center gap-2">
       <span
-        className={`rounded-full border px-3 py-1 ${
+        className={`pill text-[11px] ${
           connected
-            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-            : 'border-slate-700 bg-slate-900 text-slate-400'
+            ? 'border-success/40 bg-success/10 text-success'
+            : 'text-muted'
         }`}
       >
-        {connected ? 'stream connected' : 'stream idle'}
+        {connected ? <span className="live-dot" aria-hidden /> : <span className="h-2 w-2 rounded-full bg-faint" aria-hidden />}
+        {connected ? 'live' : 'idle'}
       </span>
       <span
-        className={`rounded-full border px-3 py-1 ${
+        className={`pill text-[11px] ${
           admin
-            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+            ? 'border-success/40 bg-success/10 text-success'
             : admin === false
-              ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
-              : 'border-slate-700 bg-slate-900 text-slate-400'
+              ? 'border-warning/40 bg-warning/10 text-warning'
+              : 'text-muted'
         }`}
       >
-        {admin === null ? 'admin: ?' : admin ? 'admin: yes' : 'admin: no'}
+        <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 2 4 5v6c0 5 3.5 9 8 11 4.5-2 8-6 8-11V5l-8-3z" />
+        </svg>
+        {admin === null ? 'admin · ?' : admin ? 'admin · yes' : 'admin · no'}
       </span>
     </div>
   );
@@ -37,9 +41,9 @@ export const AdminBanner = memo(AdminBannerInner);
 function AdminWarningInner({ admin }: { admin: boolean | null }) {
   if (admin !== false) return null;
   return (
-    <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-      Backend is not running as Administrator. ETW kernel providers cannot be enabled — sessions
-      will be created but no real events will stream. Restart the backend in an elevated shell.
+    <div className="mb-3 mt-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-warning fade-in">
+      <strong className="font-semibold">Not running as Administrator.</strong>{' '}
+      ETW kernel providers can&apos;t be enabled — sessions will be created but no events will stream. Restart the backend in an elevated shell.
     </div>
   );
 }
