@@ -351,20 +351,16 @@ void EventConsumer::HandleEvent(PEVENT_RECORD record) {
             unsigned long long parent_pid = 0;
             if (GetUInt(ev, L"ParentProcessID", parent_pid) ||
                 GetUInt(ev, L"ParentProcessId", parent_pid)) {
-                bool added = pids_.AddIfParentTracked(
-                    static_cast<DWORD>(parent_pid),
-                    static_cast<DWORD>(payload_pid));
-                if (added && cfg_.engine_file) {
-                    // Newly-tracked child may already have files open before
-                    // the kernel CreateFile events reach us. Seed the cache
-                    // with whatever's in its handle table right now so
-                    // immediate Read/Write events still resolve to a path.
-                    auto entries = EnumerateOpenFiles(
-                        static_cast<uint32_t>(payload_pid));
-                    if (!entries.empty()) {
-                        SeedFileObjectCache(entries);
-                    }
-                }
+                pids_.AddIfParentTracked(static_cast<DWORD>(parent_pid),
+                                         static_cast<DWORD>(payload_pid));
+                // NOTE: we used to call EnumerateOpenFiles() here to seed the
+                // child's handles into the cache. That ran on the ETW consumer
+                // thread and did a system-wide NtQuerySystemInformation scan
+                // (~200 ms). Buffers filled, kernel dropped events, the
+                // session died after a few seconds. Reverted in v0.2.6 — the
+                // CreateFile events from the child still populate the cache
+                // organically; we just don't catch handles opened before the
+                // ProcessStart fires (a small minority on most workloads).
             }
         } else if (ev.event_id == 2) {
             pids_.Remove(relevant_pid);
