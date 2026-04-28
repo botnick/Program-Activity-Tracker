@@ -15,7 +15,7 @@ Localhost-only, single-user. No telemetry, no cloud calls.
  1) Right-click  tracker.exe  →  Run as administrator
     (หรือดับเบิลคลิก  tracker.exe  แล้วกด Yes บน UAC)
 
- 2) กด ▶ Start ในโปรแกรม
+ 2) กดปุ่ม "Start" ในโปรแกรม
     เบราว์เซอร์จะเปิดให้อัตโนมัติ — เลือก process ที่ต้องการดู
     แล้วกด "Start capture"
 

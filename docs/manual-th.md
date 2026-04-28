@@ -39,12 +39,12 @@
 2. แตก zip ไปที่ไหนก็ได้ (เช่น `C:\Tools\ActivityTracker`)
 3. **ดับเบิลคลิก `tracker.exe`** ในโฟลเดอร์ที่แตก
 4. Windows ถาม UAC → กด **Yes**
-5. หน้าต่าง GUI เปิดมา → กดปุ่ม **▶ Start**
+5. หน้าต่าง GUI เปิดมา → กดปุ่ม **Start**
    - tracker.exe จะ spawn backend uvicorn เป็น subprocess
    - เบราว์เซอร์จะเปิด `http://127.0.0.1:8000` อัตโนมัติเมื่อพร้อม
 6. เลือก process จาก process picker → กด **Start capture**
 
-ปิดระบบ: กดปุ่ม **■ Stop** ในโปรแกรม หรือปิดหน้าต่าง tracker.exe (มันจะ cleanup tracker_capture.exe + ETW sessions ให้อัตโนมัติ)
+ปิดระบบ: กดปุ่ม **Stop** ในโปรแกรม หรือปิดหน้าต่าง tracker.exe (มันจะ cleanup tracker_capture.exe + ETW sessions ให้อัตโนมัติ)
 
 ### 2.B วิธี source / dev (one-click)
 

@@ -1249,7 +1249,7 @@ class TrackerApp:
             foreground=[("disabled", p["faint"])],
         )
 
-        # Primary accent button — used for the main "▶ Start" action.
+        # Primary accent button — used for the main Start action.
         style.configure("Accent.TButton",
             background=p["accent"], foreground="#06121f",
             borderwidth=0, focusthickness=0,
@@ -1380,13 +1380,13 @@ class TrackerApp:
         actions_left = ttk.Frame(actions, style="Toolbar.TFrame")
         actions_left.pack(side=tk.LEFT, padx=20, pady=12)
         self.btn_start = ttk.Button(
-            actions_left, text="▶  Start", style="Accent.TButton", command=self._on_start
+            actions_left, text="Start", style="Accent.TButton", command=self._on_start
         )
         self.btn_start.pack(side=tk.LEFT, padx=(0, 6))
-        self.btn_stop = ttk.Button(actions_left, text="■  Stop", command=self._on_stop)
+        self.btn_stop = ttk.Button(actions_left, text="Stop", command=self._on_stop)
         self.btn_stop.pack(side=tk.LEFT, padx=4)
         self.btn_restart = ttk.Button(
-            actions_left, text="↻  Restart", command=self._on_restart
+            actions_left, text="Restart", command=self._on_restart
         )
         self.btn_restart.pack(side=tk.LEFT, padx=4)
 
@@ -1432,7 +1432,7 @@ class TrackerApp:
         footer.pack(side=tk.BOTTOM, fill=tk.X)
         self.footer_label = ttk.Label(
             footer,
-            text=f"📁  {self.root_path}",
+            text=str(self.root_path),
             style="Muted.TLabel",
             anchor="w",
         )
@@ -1459,9 +1459,9 @@ class TrackerApp:
 
     def _refresh_admin_badge(self) -> None:
         if is_admin():
-            self.admin_label.configure(text="Admin: ✓", foreground="#7ee787")
+            self.admin_label.configure(text="Admin · yes", foreground="#7ee787")
         else:
-            self.admin_label.configure(text="Admin: ✗", foreground="#f85149")
+            self.admin_label.configure(text="Admin · no", foreground="#f85149")
 
     # ---- log helpers -----------------------------------------------------
 

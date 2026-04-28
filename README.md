@@ -16,10 +16,10 @@ target.exe + descendants ──ETW──▶ tracker_capture.exe ──stdout─�
 1. Download `ActivityTracker-vX.Y.Z.zip` from the [Releases page](https://github.com/botnick/Program-Activity-Tracker/releases).
 2. Extract anywhere (e.g. `C:\Tools\ActivityTracker\`).
 3. Right-click `tracker.exe` → **Run as administrator** (or double-click and accept the UAC prompt).
-4. Click **▶ Start** in the launcher. The browser opens at `http://127.0.0.1:8000` once the backend is ready.
+4. Click **Start** in the launcher. The browser opens at `http://127.0.0.1:8000` once the backend is ready.
 5. Pick a process from the picker → click **Start capture**.
 
-To stop everything cleanly: click **■ Stop** or close the launcher window. The launcher kills `tracker_capture.exe` and any stray ETW sessions on its way out.
+To stop everything cleanly: click **Stop** or close the launcher window. The launcher kills `tracker_capture.exe` and any stray ETW sessions on its way out.
 
 > **Optional one-time Defender exclusion** (the ETW capture binary occasionally trips Defender): run `scripts\setup-defender-exclusion.ps1` as admin from inside the extracted folder.
 

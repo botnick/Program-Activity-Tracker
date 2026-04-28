@@ -85,7 +85,7 @@ function CodeBlock({ children, language = 'json' }: { children: string; language
         onClick={onCopy}
         className="absolute right-2 top-2 rounded-md border border-slate-700 bg-slate-900/80 px-2 py-1 text-[10px] text-slate-300 hover:border-cyan-500/40 hover:text-cyan-200"
       >
-        {copied ? '✓ copied' : 'Copy'}
+        {copied ? 'Copied' : 'Copy'}
       </button>
     </div>
   );
@@ -148,7 +148,7 @@ function ClientPanel({ id }: { id: ClientId }) {
           </p>
           <CodeBlock>{STDIO_CONFIG_JSON}</CodeBlock>
           <p className="text-xs text-slate-400">
-            Restart Claude Desktop. The MCP icon (🔌) appears in the chat composer when the server is connected.
+            Restart Claude Desktop. The MCP indicator appears in the chat composer when the server is connected.
           </p>
           <p className="text-xs text-slate-400">
             Want to use the bundled Python from the release zip (so you don&apos;t have to install Python)? Use the
