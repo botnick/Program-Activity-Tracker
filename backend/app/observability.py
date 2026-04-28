@@ -33,7 +33,7 @@ import time
 import uuid
 from collections.abc import Iterable
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from fastapi import APIRouter, Response
@@ -395,7 +395,7 @@ def is_safe_exe_path(path: str) -> bool:
     if not path or not isinstance(path, str):
         return False
     try:
-        p = Path(path)
+        p = PureWindowsPath(path)
     except (TypeError, ValueError):
         return False
     if not p.is_absolute():

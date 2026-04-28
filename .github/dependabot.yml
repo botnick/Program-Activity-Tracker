@@ -4,12 +4,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     groups:
       python-deps:
-        update-types:
-          - minor
-          - patch
         patterns:
           - "*"
 
@@ -17,12 +14,9 @@ updates:
     directory: /mcp
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     groups:
       mcp-deps:
-        update-types:
-          - minor
-          - patch
         patterns:
           - "*"
 
@@ -30,12 +24,9 @@ updates:
     directory: /ui
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     groups:
       ui-deps:
-        update-types:
-          - minor
-          - patch
         patterns:
           - "*"
 
@@ -43,3 +34,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns:
+          - "*"

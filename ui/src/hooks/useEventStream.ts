@@ -237,7 +237,7 @@ export function useEventStream(sessionId: string, options: Options = {}) {
         socket = null;
       }
     };
-  }, [sessionId, scheduleFlush]);
+  }, [sessionId, scheduleFlush, dedupAndCommit]);
 
   return { events, connected, clear, error, setEvents };
 }

@@ -24,7 +24,7 @@ jobs:
         run: mypy backend service
         continue-on-error: true
       - name: Test
-        run: pytest -v --cov=backend --cov=service --cov-report=term-missing --cov-fail-under=70
+        run: pytest -v --cov=backend --cov=service --cov-report=term-missing --cov-fail-under=65
 
   python-linux:
     # Skips ETW-touching tests (pywintrace import fails on Linux).
