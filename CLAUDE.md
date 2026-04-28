@@ -1,12 +1,12 @@
 # CLAUDE.md
 
-Guide for Claude Code instances working in this repository.
+Internal architecture, conventions, and invariants reference for contributors. Read this first before touching anything that crosses module boundaries.
 
 ## Project
 
 Real-time Windows process activity tracker: pick a target process, stream every file / registry / process / network event from the kernel into a web UI. ETW-based, same visibility as Procmon. Single-user, localhost-only.
 
-Tech stack: native C++ ETW engine (CMake build), Python FastAPI control plane, React+Vite UI, MCP server (stdio) for AI clients, Tk + PyInstaller GUI launcher (`tracker.exe`) for end users.
+Tech stack: native C++ ETW engine (CMake build), Python FastAPI control plane, React+Vite UI, MCP (Model Context Protocol) bridge over stdio, Tk + PyInstaller GUI launcher (`tracker.exe`) for end users.
 
 **Two delivery modes:**
 - **Dev** — `git clone`, requires Python 3.10+ / Node 20+ / VS 2022 (C++) / CMake / Ninja. Entry point is `start.bat` at repo root.
@@ -69,7 +69,7 @@ The MCP server (`mcp/`) is a standalone package that talks to the FastAPI HTTP s
 
 - **`ui/`** — React + Tailwind. Every component memoized; events flushed in `requestAnimationFrame` so render rate caps at the display refresh rate even at 1000+ events/sec.
 
-- **`mcp/`** — standalone package `activity-tracker-mcp`. 14 tools / 6 resources / 4 prompts via `mcp.server.fastmcp.FastMCP`. Stdio transport. Configured via `.mcp.json` at repo root (Claude Code) or `claude_desktop_config.json` (Claude Desktop).
+- **`mcp/`** — standalone package `activity-tracker-mcp`. 14 tools / 6 resources / 4 prompt templates via `mcp.server.fastmcp.FastMCP`. Stdio transport. Configured via `.mcp.json` at the repo root for editor-style clients, or via the host's MCP server config file for desktop clients.
 
 ## Commands
 

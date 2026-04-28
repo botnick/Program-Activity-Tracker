@@ -78,8 +78,8 @@
         │   └─ Drawer        │                  └──────┬─────────────┘
         └────────────────────┘                          │
                                                         ▼
-                                                  Claude Code /
-                                                  Claude Desktop
+                                                  MCP client
+                                                  (any compatible host)
 ```
 
 ## Concurrency model
@@ -146,4 +146,4 @@ Single-user, not redistributed. Localhost-bind plus a tight CORS allowlist for `
 
 ## MCP integration
 
-`mcp/` is a separate Python package that talks to the FastAPI HTTP surface only — never imports the tracker's modules. This decouples lifecycles (the tracker runs admin; the MCP server doesn't need to) and matches the standard MCP integration pattern. 14 tools, 6 resources, 4 prompts via `mcp.server.fastmcp.FastMCP` over stdio. See `mcp/README.md`.
+`mcp/` is a separate Python package that talks to the FastAPI HTTP surface only — never imports the tracker's modules. This decouples lifecycles (the tracker runs admin; the MCP bridge doesn't need to) and matches the standard MCP integration pattern. 14 tools, 6 resources, 4 prompt templates via `mcp.server.fastmcp.FastMCP` over stdio. See `mcp/README.md`.

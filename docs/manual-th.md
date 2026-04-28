@@ -179,12 +179,11 @@ python -m pip install -r requirements-lock.txt
 
 ---
 
-## 4. ใช้ MCP server กับ AI client
+## 4. ใช้ MCP bridge กับ MCP-compatible client
 
-ระบบมี MCP server (`activity-tracker-mcp`) — 14 tools / 6 resources / 4 prompts ผ่าน stdio
-ใช้ได้กับ AI client ทุกตัวที่ implement MCP standard:
+ระบบมี MCP server (`activity-tracker-mcp`) — 14 tools / 6 resources / 4 prompt templates ผ่าน stdio
+ใช้กับ client ใดก็ได้ที่ implement Model Context Protocol:
 
-- Claude Code, Claude Desktop
 - Cursor IDE
 - Continue (VS Code / JetBrains extension)
 - Cline (VS Code extension)
@@ -231,10 +230,10 @@ python -m pip install -r requirements-lock.txt
 | `get_capture_stats` | ETW stats per session |
 | `get_metrics` | raw Prometheus metrics |
 
-### 4.3 ตัวอย่าง prompt
+### 4.3 ตัวอย่างคำสั่ง
 
 - *"ใช้ activity-tracker ดูว่า xdt.exe เขียนอะไรลง AppData บ้าง"*
-- *"summarize session ล่าสุด — มีไฟล์อะไรเปลี่ยนแปลง, registry ไหนถูกแก้"*
+- *"สรุป session ล่าสุด — มีไฟล์อะไรเปลี่ยนแปลง, registry ไหนถูกแก้"*
 - *"export session นั้นเป็น CSV ให้หน่อย"*
 - *"compare session A กับ B"*
 
@@ -302,7 +301,7 @@ activity-tracker/
 │
 ├── tests/ + bench/                           ← 99 tests + throughput bench
 ├── docs/                                     ← architecture / operations / threat-model / manual-th
-└── CLAUDE.md                                 ← guide สำหรับ Claude Code
+└── CLAUDE.md                                 ← internal architecture / invariants reference
 ```
 
 ---
@@ -347,7 +346,7 @@ xdt.exe (target) ──┐
                    │  WebSocket broadcast
                    ▼
         ┌──────────────────────┐         ┌────────────────┐
-        │  Web UI (React)      │ ◀─HTTP─ │  MCP server    │ ──▶ Claude
+        │  Web UI (React)      │ ◀─HTTP─ │  MCP server    │ ──▶ MCP client
         │  http://127.0.0.1    │         │  (stdio)       │
         │       :8000          │         └────────────────┘
         └──────────────────────┘

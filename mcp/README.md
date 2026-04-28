@@ -1,6 +1,6 @@
 # activity-tracker-mcp
 
-Standalone MCP (Model Context Protocol) server that exposes the Activity Tracker's HTTP API to **any MCP-compatible AI client** — Claude Code, Claude Desktop, Cursor, Continue, Cline, Windsurf, Goose, Zed, MCP Inspector, plus generic stdio clients. Talks HTTP only — never imports the tracker's modules — so it can run from anywhere as long as the backend is reachable.
+Standalone MCP (Model Context Protocol) server that exposes the Activity Tracker's HTTP API to any MCP-compatible client — Cursor, Continue, Cline, Windsurf, Goose, Zed, the MCP Inspector, plus any generic stdio host. Talks HTTP only — never imports the tracker's modules — so it can run from anywhere as long as the backend is reachable.
 
 > **The web UI ships an "MCP How-To" tab** with copy-paste config snippets per client. Open `tracker.exe` (release) or run the dev backend, then click **MCP How-To** in the top tab nav.
 
@@ -22,13 +22,11 @@ python -m mcp_tracker
 
 stdio transport. Logs go to **stderr only** (stdio MCP requires clean stdout for JSON-RPC framing).
 
-## Claude Code
+## Setup
 
-`.mcp.json` is already at the repo root. Open the project in Claude Code, then `/mcp` lists the 14 activity-tracker tools.
+The release zip and the dev repo both ship `.mcp.json` at the project root. Editor-style hosts (Cursor, Continue, Cline, Windsurf, Zed, Goose) auto-detect that file when you open the project — no further config needed.
 
-## Claude Desktop
-
-Edit `%APPDATA%\Claude\claude_desktop_config.json`:
+For desktop hosts that read a single user-wide config file, add this block to that file:
 
 ```json
 {
@@ -42,7 +40,7 @@ Edit `%APPDATA%\Claude\claude_desktop_config.json`:
 }
 ```
 
-If you have multiple Pythons, point `command` at the venv's `python.exe` explicitly.
+If you have multiple Pythons installed, point `command` at the specific `python.exe` you installed `mcp_tracker` into. Inside the release zip, that's `<release>/python/python.exe`.
 
 ## Tools (14)
 
@@ -74,9 +72,9 @@ URI-addressable read-only:
 - `tracker://sessions/{session_id}/summary` (5 s TTL cache)
 - `tracker://processes`
 
-## Prompts (4)
+## Prompt templates (4)
 
-User-invocable templates:
+User-invocable templates the MCP host can offer:
 
 - `analyze_session(session_id)` — forensic classification
 - `find_files_modified(session_id, path_pattern?)` — write/delete/rename grouped by directory
@@ -109,14 +107,14 @@ python -m pytest tests -v
 
 | Symptom | Fix |
 |---|---|
-| `Tracker is not reachable at <url>` | start the backend (`start.bat` at repo root) |
+| `Tracker is not reachable at <url>` | start the backend (release: `tracker.exe` -> Start; dev: `start.bat`) |
 | `No session with id …` | call `list_sessions` first |
 | `/metrics` returns 501 | `prometheus-client` not installed (it should be from `pyproject.toml`) |
-| Tool calls fail silently in Claude Desktop | look in stderr — Claude shows it; or check `tracker_*` not registered: confirm `claude_desktop_config.json` syntax |
+| Tool calls fail silently | check the host's MCP stderr panel — Python errors land there |
 
-## Example Claude prompts
+## Example prompts
 
-- "Use activity-tracker to summarize what xdt.exe wrote to AppData."
+- "Use activity-tracker to summarise what xdt.exe wrote to AppData."
 - "Compare session A and B, list paths unique to each."
 - "Export session 78389686 as CSV."
 - "List the top 10 paths Notepad touched in the last 30 seconds."

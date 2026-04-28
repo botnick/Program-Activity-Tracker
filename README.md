@@ -1,8 +1,8 @@
 # Activity Tracker — real-time Windows process monitor (ETW + web UI)
 
-Lightweight, free, open-source alternative to Procmon. Pick any running Windows process and watch its file, registry, process, and network activity stream live into a browser. Pure ETW (no DLL injection, no hooks), single-binary capture engine in C++, FastAPI backend, React UI, and a built-in MCP server so AI clients (Claude Code / Claude Desktop / Cursor / Continue / Cline / Windsurf / Goose) can query and summarise sessions.
+Lightweight, free, open-source alternative to Procmon. Pick any running Windows process and watch its file, registry, process, and network activity stream live into a browser. Pure ETW (no DLL injection, no hooks), single-binary capture engine in C++, FastAPI backend, React UI, plus an optional MCP (Model Context Protocol) bridge so any compatible client can query and summarise sessions.
 
-**Use it for:** debugging "what is this exe doing", malware triage, detecting hidden file writes, IO profiling, watching a child process tree, integrating live activity into AI-assisted workflows.
+**Use it for:** debugging "what is this exe doing", malware triage, detecting hidden file writes, IO profiling, watching a child process tree.
 
 **[Download the latest release →](https://github.com/botnick/Program-Activity-Tracker/releases)** — Windows 10/11 x64. No Python install, no compiler, no internet on first run. Just unzip and double-click `tracker.exe`.
 
@@ -30,7 +30,7 @@ To stop everything cleanly: click **Stop** or close the launcher window. The lau
 - **Process picker** with the actual Windows icons.
 - **Capture monitor in `tracker.exe`** — live CPU / RAM / threads / handles for the native binary, events-per-second sparkline, per-kind bar chart.
 - **5 log streams** (`events`, `requests`, `errors`, `native`, `tracker`) tailable from inside the UI.
-- **MCP server** — 14 tools, 6 resources, 4 prompts over stdio. The "MCP How-To" tab in the UI has copy-paste configs for every supported client.
+- **MCP bridge** — 14 tools, 6 resources, 4 prompt templates over stdio. The "MCP How-To" tab in the UI has copy-paste configs for every supported client.
 - **SQLite WAL persistence** — sessions + events survive restarts; 30-day automatic retention sweep.
 - **Native-only ETW backend** — single C++ binary, no Python ETW fallback, no API hooks, no driver.
 
@@ -73,7 +73,7 @@ Set in `cmd` before launching `tracker.exe`, e.g. `set TRACKER_DB_RETENTION_DAYS
 
 ## MCP server (use with AI clients)
 
-The release zip ships an `mcp/` folder + `.mcp.json`; the bundled Python has `mcp_tracker` already installed. Open the **MCP How-To** tab in the web UI for copy-paste config snippets covering Claude Code, Claude Desktop, Cursor, Continue, Cline, Windsurf, Goose, MCP Inspector, and any generic MCP-stdio client. The backend (`tracker.exe`) must be running for tool calls to succeed.
+The release zip ships an `mcp/` folder and a `.mcp.json` config; the bundled Python already has `mcp_tracker` installed. Open the **MCP How-To** tab in the web UI for copy-paste config snippets for every supported client (Cursor, Continue, Cline, Windsurf, Goose, plus a generic stdio recipe). The backend (`tracker.exe`) must be running for tool calls to succeed.
 
 ## Building from source
 

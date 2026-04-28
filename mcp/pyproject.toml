@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "activity-tracker-mcp"
 version = "0.1.0"
-description = "MCP server exposing the Activity Tracker to Claude Code / Claude Desktop"
+description = "Model Context Protocol bridge for the Activity Tracker (stdio)"
 requires-python = ">=3.10"
 readme = "README.md"
 dependencies = [
