@@ -359,6 +359,36 @@ export function App() {
     setSelectedEvent(null);
   }, []);
 
+  // Backpressure surfacing: poll /api/health every 5 s and show a toast
+  // the first time `dropped_subscribers` increases. Without this the user
+  // would silently miss events when the WS subscriber queue overflows.
+  const lastDroppedRef = useRef<number | null>(null);
+  useEffect(() => {
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const h = await api<{ dropped_subscribers?: number }>('/api/health');
+        const cur = h.dropped_subscribers ?? 0;
+        const prev = lastDroppedRef.current;
+        if (prev !== null && cur > prev) {
+          pushToast({
+            kind: 'error',
+            message: `Backend dropped ${cur - prev} slow subscriber(s) — events may be lagging`,
+            ttl: 8000,
+          });
+        }
+        lastDroppedRef.current = cur;
+      } catch {
+        // Backend may be down momentarily — don't spam toasts.
+      }
+      if (!stopped) window.setTimeout(tick, 5000);
+    };
+    tick();
+    return () => {
+      stopped = true;
+    };
+  }, [pushToast]);
+
   // Keyboard navigation for the events table + detail drawer:
   //   Esc        close the drawer
   //   ArrowDown  move selection one row down

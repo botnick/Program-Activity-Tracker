@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     # How often the writer thread runs the retention sweep.
     db_retention_check_minutes: int = 60
 
+    # Optional bearer-token auth. When set, every /api/* and /ws/* request
+    # must carry the same token in the `Authorization: Bearer <t>` header
+    # OR a `?token=<t>` query string. Empty = auth disabled (default, so
+    # existing single-user setups don't break). The launcher (tracker.exe)
+    # generates a per-launch token automatically and passes it to the
+    # browser; manual users can set TRACKER_AUTH_TOKEN themselves.
+    auth_token: str = ""
+
     model_config = SettingsConfigDict(
         env_prefix="TRACKER_",
         env_file=".env",

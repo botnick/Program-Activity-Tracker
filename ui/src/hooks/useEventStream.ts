@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../api';
+import { api, withToken } from '../api';
 import type { ActivityEvent } from '../types';
 
 const MAX_EVENTS = 5000;
@@ -157,7 +157,9 @@ export function useEventStream(sessionId: string, options: Options = {}) {
         wsParams.set('since', lastTsRef.current);
         wsParams.set('replay', 'false');
       }
-      const wsUrl = wsParams.toString() ? `${wsBase}?${wsParams.toString()}` : wsBase;
+      const wsUrl = withToken(
+        wsParams.toString() ? `${wsBase}?${wsParams.toString()}` : wsBase,
+      );
       socket = new WebSocket(wsUrl);
 
       socket.onopen = () => {

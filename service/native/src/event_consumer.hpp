@@ -136,6 +136,7 @@ private:
 
     std::atomic<uint64_t> errors_{0};
     std::atomic<uint64_t> last_event_filetime_{0};
+    std::atomic<bool> pid_cap_warned_{false};  // emit cap-reached stderr only once
 };
 
 }  // namespace tracker

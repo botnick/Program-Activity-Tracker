@@ -1,9 +1,58 @@
 import type { ActivityEvent, EventQueryParams, Session } from './types';
 
+// ---- auth token ----------------------------------------------------------
+
+const TOKEN_KEY = 'tracker.auth.token';
+
+/** Read the bearer token from localStorage, falling back to the URL `?token=`
+ *  query string. The launcher (tracker.exe) opens the browser with the token
+ *  in the URL on first run; we hoist it into localStorage and strip it from
+ *  the address bar so reloads stay clean.                                */
+function readToken(): string {
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get('token');
+    if (fromUrl) {
+      window.localStorage.setItem(TOKEN_KEY, fromUrl);
+      const url = new URL(window.location.href);
+      url.searchParams.delete('token');
+      window.history.replaceState({}, '', url.toString());
+      return fromUrl;
+    }
+    return window.localStorage.getItem(TOKEN_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+let cachedToken = readToken();
+
+/** Attach token to a URL as `?token=...`. Used for resources where headers
+ *  aren't an option (WebSocket, <a href> downloads, <img src>).             */
+export function withToken(url: string): string {
+  if (!cachedToken) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}token=${encodeURIComponent(cachedToken)}`;
+}
+
+export function authHeaders(): Record<string, string> {
+  return cachedToken ? { Authorization: `Bearer ${cachedToken}` } : {};
+}
+
+/** Re-read the token (e.g. if the user pasted a fresh URL).                */
+export function refreshToken(): void {
+  cachedToken = readToken();
+}
+
+// ---- typed fetch helpers --------------------------------------------------
+
 export const api = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(),
+      ...(init?.headers || {}),
+    },
   });
   if (!response.ok) {
     throw new Error(await response.text());
@@ -52,7 +101,9 @@ export const exportUrl = (
       qs.set(k, v);
     }
   });
-  return `/api/sessions/${sessionId}/export?${qs.toString()}`;
+  // Export downloads can't carry an Authorization header (they go via plain
+  // anchor click), so the token rides on the query string instead.
+  return withToken(`/api/sessions/${sessionId}/export?${qs.toString()}`);
 };
 
 export const exportSession = (

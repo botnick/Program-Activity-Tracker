@@ -72,6 +72,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Auth runs OUTSIDE the trace middleware so a 401 still gets logged with
+    # a trace id. The middleware is a no-op unless TRACKER_AUTH_TOKEN is set.
+    app.add_middleware(observability.AuthMiddleware)
     app.add_middleware(observability.RequestTraceMiddleware)
 
     # Mount /assets if the UI was built.

@@ -16,6 +16,12 @@ namespace tracker {
 
 class PidFilter {
 public:
+    // Soft cap on tracked PIDs. Past this, AddIfParentTracked refuses new
+    // children. Prevents a fork-bomb-style target from blowing up cache /
+    // memory and stalling the consumer thread. Configurable via the public
+    // SetMaxPids() so callers (main.cpp) can override at startup.
+    static constexpr size_t kDefaultMaxPids = 500;
+
     void AddRoot(DWORD pid) {
         std::lock_guard<std::mutex> lock(mu_);
         pids_.insert(pid);
@@ -32,10 +38,25 @@ public:
         return pids_.count(pid) > 0;
     }
 
-    // Add `child` if `parent` is currently tracked. Returns true if added.
-    bool AddIfParentTracked(DWORD parent, DWORD child) {
+    void SetMaxPids(size_t cap) {
         std::lock_guard<std::mutex> lock(mu_);
+        max_pids_ = cap == 0 ? kDefaultMaxPids : cap;
+    }
+
+    // Add `child` if `parent` is currently tracked AND we're under cap.
+    // Returns true if added. Returns false in two distinct cases:
+    //   - parent isn't tracked (silent — normal flow)
+    //   - parent IS tracked but we hit the cap (caller logs once)
+    // The third out-param `was_capped` lets the caller distinguish the
+    // two so it can emit a one-shot warning the first time.
+    bool AddIfParentTracked(DWORD parent, DWORD child, bool* was_capped = nullptr) {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (was_capped) *was_capped = false;
         if (pids_.count(parent) == 0) return false;
+        if (pids_.size() >= max_pids_) {
+            if (was_capped) *was_capped = true;
+            return false;
+        }
         pids_.insert(child);
         return true;
     }
@@ -43,6 +64,11 @@ public:
     size_t Size() const {
         std::lock_guard<std::mutex> lock(mu_);
         return pids_.size();
+    }
+
+    size_t MaxPids() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        return max_pids_;
     }
 
     // PID-reuse protection. expected_create_time is in 100ns ticks since
@@ -88,6 +114,7 @@ private:
     mutable std::mutex mu_;
     std::unordered_set<DWORD> pids_;
     std::unordered_map<DWORD, ULONGLONG> create_times_;
+    size_t max_pids_ = kDefaultMaxPids;
 };
 
 }  // namespace tracker

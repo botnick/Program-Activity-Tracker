@@ -312,6 +312,56 @@ def read_log_tail(stream: str, tail: int = 200) -> list[dict[str, Any]]:
     return items
 
 
+# ---- auth middleware -------------------------------------------------------
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    """Optional bearer-token gate for /api/* and /ws/* requests.
+
+    Active only when ``settings.auth_token`` is set (via TRACKER_AUTH_TOKEN
+    env var or .env). When inactive, every request passes through. When
+    active, the middleware accepts the token via either:
+
+    * ``Authorization: Bearer <token>`` header  (preferred for APIs / SDKs)
+    * ``?token=<token>`` query string           (fallback for browsers + WS)
+
+    The HTML index, /favicon.ico, /assets/*, /metrics and /api/health are
+    intentionally exempt: the index page must load before the JS can attach
+    a token, and /metrics + /api/health are typically scraped by tools that
+    don't speak this auth scheme. /metrics has its own
+    ``settings.metrics_enabled`` switch and CORS still locks the host to
+    localhost, so leaving these unauthenticated is acceptable.
+    """
+
+    _EXEMPT_EXACT = frozenset({"/", "/favicon.ico", "/metrics", "/api/health"})
+    _EXEMPT_PREFIX = ("/assets/",)
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        token = (get_settings().auth_token or "").strip()
+        if not token:
+            return await call_next(request)
+
+        path = request.url.path
+        if path in self._EXEMPT_EXACT:
+            return await call_next(request)
+        if any(path.startswith(p) for p in self._EXEMPT_PREFIX):
+            return await call_next(request)
+
+        # Header takes precedence; fall back to query string for WS / <img>.
+        auth = request.headers.get("authorization", "")
+        provided = ""
+        if auth.lower().startswith("bearer "):
+            provided = auth[7:].strip()
+        if not provided:
+            provided = request.query_params.get("token", "")
+
+        if provided != token:
+            return JSONResponse(
+                {"detail": "unauthorized — set TRACKER_AUTH_TOKEN or pass ?token="},
+                status_code=401,
+            )
+        return await call_next(request)
+
+
 # ---- request middleware ----------------------------------------------------
 
 class RequestTraceMiddleware(BaseHTTPMiddleware):

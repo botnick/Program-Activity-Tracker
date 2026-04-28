@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../api';
+import { api, withToken } from '../api';
 
 export type LogEntry = {
   ts?: string;
@@ -131,7 +131,9 @@ export function useLogStream(stream: string, live: boolean) {
       const params = new URLSearchParams();
       params.set('backlog', firstConnect ? '100' : '0');
       firstConnect = false;
-      const url = `${window.location.origin.replace('http', 'ws')}/ws/logs/${stream}?${params.toString()}`;
+      const url = withToken(
+        `${window.location.origin.replace('http', 'ws')}/ws/logs/${stream}?${params.toString()}`,
+      );
       ws = new WebSocket(url);
       ws.onopen = () => {
         if (cancelled) return;

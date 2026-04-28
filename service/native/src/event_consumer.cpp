@@ -351,16 +351,25 @@ void EventConsumer::HandleEvent(PEVENT_RECORD record) {
             unsigned long long parent_pid = 0;
             if (GetUInt(ev, L"ParentProcessID", parent_pid) ||
                 GetUInt(ev, L"ParentProcessId", parent_pid)) {
-                pids_.AddIfParentTracked(static_cast<DWORD>(parent_pid),
-                                         static_cast<DWORD>(payload_pid));
+                bool was_capped = false;
+                pids_.AddIfParentTracked(
+                    static_cast<DWORD>(parent_pid),
+                    static_cast<DWORD>(payload_pid),
+                    &was_capped);
+                if (was_capped &&
+                    !pid_cap_warned_.exchange(true, std::memory_order_relaxed)) {
+                    std::fprintf(stderr,
+                                 "[warn] tracked-PID cap reached (%zu); new "
+                                 "children won't be added. Override with "
+                                 "--max-pids=N if needed.\n",
+                                 pids_.MaxPids());
+                    std::fflush(stderr);
+                }
                 // NOTE: we used to call EnumerateOpenFiles() here to seed the
-                // child's handles into the cache. That ran on the ETW consumer
-                // thread and did a system-wide NtQuerySystemInformation scan
-                // (~200 ms). Buffers filled, kernel dropped events, the
-                // session died after a few seconds. Reverted in v0.2.6 — the
-                // CreateFile events from the child still populate the cache
-                // organically; we just don't catch handles opened before the
-                // ProcessStart fires (a small minority on most workloads).
+                // child's handles into the cache. That ran on the ETW
+                // consumer thread and blocked it for ~200 ms — kernel ETW
+                // buffers filled and the session died (v0.2.5 regression).
+                // The child's own CreateFile events seed the cache instead.
             }
         } else if (ev.event_id == 2) {
             pids_.Remove(relevant_pid);

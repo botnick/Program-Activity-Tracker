@@ -74,6 +74,7 @@ struct Args {
     std::wstring session_name;
     bool no_orphan_cleanup = false;
     int stats_interval_ms = 1000;  // 0 disables heartbeat
+    size_t max_pids = 0;  // 0 = use PidFilter::kDefaultMaxPids
 };
 
 std::wstring DefaultSessionName(DWORD pid) {
@@ -143,6 +144,12 @@ bool ParseArgs(int argc, wchar_t** argv, Args& args) {
             long long ms = std::wcstoll(v.c_str(), nullptr, 10);
             if (ms < 0) ms = 0;
             args.stats_interval_ms = static_cast<int>(ms);
+        } else if (a == L"--max-pids") {
+            std::wstring v;
+            if (!next(v)) return false;
+            long long n = std::wcstoll(v.c_str(), nullptr, 10);
+            if (n < 1) n = 1;
+            args.max_pids = static_cast<size_t>(n);
         } else if (a == L"--help" || a == L"-h") {
             std::fprintf(stderr,
                          "tracker_capture --pid <int> "
@@ -150,6 +157,7 @@ bool ParseArgs(int argc, wchar_t** argv, Args& args) {
                          "[--engines file,registry,process,network] "
                          "[--session-name <name>] [--no-orphan-cleanup] "
                          "[--stats-interval-ms <int>] "
+                         "[--max-pids <int>] "
                          "[--version|-V]\n");
             return false;
         } else {
@@ -248,6 +256,7 @@ int wmain(int argc, wchar_t** argv) {
     translator.BuildFromSystem();
 
     tracker::PidFilter pids;
+    if (args.max_pids > 0) pids.SetMaxPids(args.max_pids);
     pids.AddRoot(args.pid);
 
     tracker::EtwSession session;

@@ -23,6 +23,7 @@ import json
 import os
 import queue
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -230,11 +231,21 @@ class BackendProcess:
     def pid(self) -> int | None:
         return self._proc.pid if self._proc else None
 
-    def start(self, python: str, root: Path, port: int) -> None:
+    def start(
+        self,
+        python: str,
+        root: Path,
+        port: int,
+        auth_token: str = "",
+    ) -> None:
         if self.running:
             return
         self._intentional_stop = False
         env = os.environ.copy()
+        # Pass the per-launch token to uvicorn via env. The backend's
+        # AuthMiddleware reads TRACKER_AUTH_TOKEN at request time.
+        if auth_token:
+            env["TRACKER_AUTH_TOKEN"] = auth_token
         env["PYTHONUNBUFFERED"] = "1"
         env.setdefault("PYTHONIOENCODING", "utf-8")
         # Ensure the release folder is on PYTHONPATH so `backend.app` and
@@ -1169,6 +1180,13 @@ class TrackerApp:
         self.version = app_version(self.root_path)
         self.python = find_python(self.root_path)
         self.port = int(os.environ.get("TRACKER_PORT", str(DEFAULT_PORT)))
+        # Per-launch bearer token. Generated fresh every time tracker.exe
+        # starts so a stale URL bookmarked by the user expires when the
+        # backend restarts. Passed to uvicorn via TRACKER_AUTH_TOKEN env
+        # and embedded in the browser-open URL via ?token=.
+        # Honour an inherited token (e.g. user explicitly set the env)
+        # so power users can pin a stable token across restarts.
+        self.auth_token = os.environ.get("TRACKER_AUTH_TOKEN") or secrets.token_urlsafe(32)
         self._setup_done = False
         self._log_tails: list[LogTail] = []
         self._poller: CaptureMetricsPoller | None = None
@@ -1181,6 +1199,11 @@ class TrackerApp:
         # up and the user has to hit Start manually.
         self._crash_restart_count = 0
         self._crash_restart_cap = 3
+        # Whether we've auto-opened the browser yet for this launcher
+        # instance. We open it once on the first successful Start so the
+        # user lands on the UI without a manual click; subsequent
+        # restarts (or auto-restart after a crash) skip the open.
+        self._browser_opened_once = False
 
         self._configure_root()
         self._build_layout()
@@ -1841,7 +1864,12 @@ class TrackerApp:
                 return
             self._set_status("starting")
             try:
-                self.backend.start(self.python or "python", self.root_path, self.port)
+                self.backend.start(
+                    self.python or "python",
+                    self.root_path,
+                    self.port,
+                    self.auth_token,
+                )
             except Exception as exc:
                 self._log_error(f"failed to start backend: {exc}")
                 self._set_status("error")
@@ -1873,6 +1901,11 @@ class TrackerApp:
                         self._crash_restart_count = 0
                         self.root.after(0, lambda: self._set_status("running"))
                         self.root.after(0, lambda: self._log_info("backend ready."))
+                        # Auto-open the browser on the first successful
+                        # start (matches the old start.bat behaviour).
+                        if not self._browser_opened_once:
+                            self._browser_opened_once = True
+                            self.root.after(0, self._on_open_browser)
                         return
             except (OSError, urllib.error.URLError):
                 pass
@@ -2066,7 +2099,11 @@ class TrackerApp:
         self._log_warn("force-kill capture: tracker_capture.exe terminated.")
 
     def _on_open_browser(self) -> None:
-        webbrowser.open(f"http://127.0.0.1:{self.port}")
+        # Include the per-launch token so the SPA can attach it to all
+        # subsequent /api and /ws requests. /api/health is exempt from auth
+        # so the readiness probe (below) doesn't need the token.
+        url = f"http://127.0.0.1:{self.port}/?token={self.auth_token}"
+        webbrowser.open(url)
 
     def _on_open_folder(self) -> None:
         try:

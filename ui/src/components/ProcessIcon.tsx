@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { withToken } from '../api';
 
 type Props = {
   exe?: string | null;
@@ -51,7 +52,7 @@ export const ProcessIcon = React.memo(function ProcessIcon({
       height={size}
       style={{ width: dim, height: dim }}
       className={`object-contain ${className}`}
-      src={`/api/processes/icon?exe=${encodeURIComponent(exe)}`}
+      src={withToken(`/api/processes/icon?exe=${encodeURIComponent(exe)}`)}
       onError={() => setErrored(true)}
     />
   );

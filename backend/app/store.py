@@ -151,6 +151,18 @@ class SessionStore:
         )
         self._writer_thread.start()
 
+        # Retention sweep runs in its own thread so a multi-million-row
+        # DELETE can't stall the writer batch flush. Its connection is
+        # private; SQLite WAL allows concurrent readers/writers across
+        # connections.
+        self._retention_stop = threading.Event()
+        self._retention_thread = threading.Thread(
+            target=self._retention_loop,
+            name="activity-tracker-store-retention",
+            daemon=True,
+        )
+        self._retention_thread.start()
+
         # Replay persisted sessions; any session that was mid-capture when the
         # process died gets marked interrupted so the UI doesn't claim it's
         # still tracking.
@@ -224,24 +236,11 @@ class SessionStore:
         """Drain the write queue in batches and INSERT in a single tx."""
         # Dedicated connection — owned exclusively by this thread.
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-        # Schedule the next retention sweep.
-        settings = get_settings()
-        retention_interval = max(1, int(settings.db_retention_check_minutes)) * 60
-        next_retention = time.monotonic() + retention_interval
         try:
             apply_migrations(conn)  # cheap; ensures pragmas on this conn too
             while True:
                 batch: list[ActivityEvent] = []
                 shutdown_requested = False
-
-                # Periodic retention sweep — bounds DB size at sustained
-                # capture rates so events.db doesn't grow forever.
-                if time.monotonic() >= next_retention:
-                    try:
-                        self._run_retention(conn)
-                    except Exception:  # noqa: BLE001
-                        logger.exception("writer: retention sweep failed")
-                    next_retention = time.monotonic() + retention_interval
 
                 # Block until at least one item or the stop event fires.
                 try:
@@ -306,11 +305,7 @@ class SessionStore:
 
     @staticmethod
     def _run_retention(conn: sqlite3.Connection) -> None:
-        """Drop events older than ``db_retention_days``. No-op when set to 0.
-
-        Runs inside the writer thread so it shares the writer's transaction
-        pattern. Called periodically from ``_writer_loop``.
-        """
+        """Drop events older than ``db_retention_days``. No-op when set to 0."""
         days = int(get_settings().db_retention_days)
         if days <= 0:
             return
@@ -320,6 +315,28 @@ class SessionStore:
         conn.commit()
         if deleted:
             logger.info("retention: pruned %d events older than %d day(s)", deleted, days)
+
+    def _retention_loop(self) -> None:
+        """Periodic retention sweep on its own connection + thread.
+
+        Previously folded into ``_writer_loop``; pulling it out means a
+        multi-million-row DELETE no longer pauses event INSERTs. Concurrency
+        is safe because SQLite WAL allows concurrent readers AND writers
+        across connections, and the writer never reads (only INSERTs).
+        """
+        conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        try:
+            apply_migrations(conn)
+            settings = get_settings()
+            interval = max(1, int(settings.db_retention_check_minutes)) * 60
+            while not self._retention_stop.wait(timeout=interval):
+                try:
+                    self._run_retention(conn)
+                except sqlite3.Error:
+                    logger.exception("retention: sweep failed")
+        finally:
+            with contextlib.suppress(sqlite3.Error):
+                conn.close()
 
     @staticmethod
     def _flush_batch(conn: sqlite3.Connection, batch: list[ActivityEvent]) -> None:
@@ -601,22 +618,29 @@ class SessionStore:
         """Stop the writer thread, flush pending events, then halt capture."""
         # Signal writer; flush after.
         self._writer_stop.set()
-        try:
+        with contextlib.suppress(queue.Full):
             self._write_q.put_nowait(self._SHUTDOWN)
-        except Exception:  # noqa: BLE001
-            pass
         try:
             self._writer_thread.join(timeout=5.0)
-        except Exception:  # noqa: BLE001
+        except RuntimeError:
             logger.warning("writer thread join failed", exc_info=True)
+
+        # Stop the retention sweep thread. wait()/timeout=interval means it
+        # may take up to retention_check_minutes seconds to notice — that's
+        # fine, the thread is daemon so it won't block process exit.
+        self._retention_stop.set()
+        try:
+            self._retention_thread.join(timeout=2.0)
+        except RuntimeError:
+            pass
 
         for service in self.all_capture_services():
             try:
                 service.stop()
-            except Exception as exc:  # noqa: BLE001
+            except OSError as exc:
                 logger.warning("capture stop on shutdown failed: %s", exc)
 
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(sqlite3.Error):
             self._conn.close()
 
 
