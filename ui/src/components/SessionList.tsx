@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo, useRef, useState } from 'react';
 import type { Session } from '../types';
 import { captureBadge } from '../types';
 import { ProcessIcon } from './ProcessIcon';
@@ -40,17 +40,22 @@ function SessionRow({
       session.capture === 'failed');
   const canPurge = !!onPurge && !isLive;
 
-  // Per-row in-flight flags so a rapid second click is ignored. The buttons
-  // re-enable when the parent re-renders this row with fresh `session` data
-  // (deletes drop the row entirely; stops change `capture` and `isLive`).
+  // Atomic in-flight guard: useRef catches double-clicks within the same
+  // React tick (setState is async — two clicks before the first
+  // setBusyAction commits would both pass the `if (busy)` check).
+  const inFlightRef = useRef<null | 'stop' | 'purge' | 'restart'>(null);
   const [busyAction, setBusyAction] = useState<null | 'stop' | 'purge' | 'restart'>(null);
   const guard = (action: 'stop' | 'purge' | 'restart', fn: () => void) => {
-    if (busyAction) return;
+    if (inFlightRef.current) return;
+    inFlightRef.current = action;
     setBusyAction(action);
     try {
       fn();
     } finally {
-      window.setTimeout(() => setBusyAction(null), 600);
+      window.setTimeout(() => {
+        inFlightRef.current = null;
+        setBusyAction(null);
+      }, 600);
     }
   };
 
@@ -60,72 +65,85 @@ function SessionRow({
         isActive ? 'border-cyan-500 bg-cyan-500/10' : 'border-slate-800 bg-slate-950'
       }`}
     >
-      <div className="flex items-start gap-2">
-        <button
-          onClick={() => onSelect(session.session_id)}
-          className="block min-w-0 flex-1 text-left"
-        >
-          <div className="flex items-center gap-2">
-            <ProcessIcon exe={session.exe_path} size={20} className="shrink-0" />
-            <span
-              className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${badge.cls}`}
-            >
-              {badge.label}
-            </span>
-            <span className="ml-auto truncate text-xs text-slate-400">
-              pid {session.pid}
-            </span>
-          </div>
-          <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
-            <span>{new Date(session.created_at).toLocaleString()}</span>
-            <span className="font-mono text-slate-600">
-              {session.session_id.slice(0, 8)}
-            </span>
-          </div>
-          {session.capture_error && (
-            <div className="mt-1 text-xs text-amber-400">{session.capture_error}</div>
-          )}
-        </button>
-        {canPurge && (
-          <button
-            type="button"
-            title="Delete this session and its events from the DB"
-            disabled={busyAction === 'purge'}
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              guard('purge', () => onPurge!(session.session_id));
-            }}
-            className="rounded-md border border-slate-700 bg-slate-900 p-1.5 text-slate-400 transition-colors hover:border-rose-500/60 hover:text-rose-300 disabled:opacity-40"
-            aria-label="Delete session"
+      <button
+        type="button"
+        onClick={() => onSelect(session.session_id)}
+        className="block w-full min-w-0 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <ProcessIcon exe={session.exe_path} size={20} className="shrink-0" />
+          <span
+            className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${badge.cls}`}
           >
-            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M3 6h18" />
-              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              <path d="M19 6 17.5 20a2 2 0 0 1-2 1.8h-7a2 2 0 0 1-2-1.8L5 6" />
-            </svg>
-          </button>
+            {badge.label}
+          </span>
+          <span className="ml-auto truncate text-xs text-slate-400">
+            pid {session.pid}
+          </span>
+        </div>
+        <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+          <span>{new Date(session.created_at).toLocaleString()}</span>
+          <span className="font-mono text-slate-600">
+            {session.session_id.slice(0, 8)}
+          </span>
+        </div>
+        {session.capture_error && (
+          <div className="mt-1 text-xs text-amber-400">{session.capture_error}</div>
         )}
-      </div>
+      </button>
+
+      {/* Action row — full-width buttons under the row body so the user can
+          never confuse "delete" with "start new session". A live session
+          shows only Stop; an inactive session shows Restart + Delete side
+          by side. */}
       {isLive && (
         <button
           type="button"
           disabled={busyAction === 'stop'}
           onClick={() => guard('stop', () => onStop(session.session_id))}
-          className="mt-2 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 transition-colors hover:border-rose-500/60 hover:text-rose-300 disabled:opacity-40"
+          className="mt-3 w-full rounded-md border border-rose-500/40 bg-rose-500/5 px-2 py-1.5 text-xs font-medium text-rose-200 transition-colors hover:border-rose-500/70 hover:bg-rose-500/15 disabled:opacity-40"
         >
           {busyAction === 'stop' ? 'Stopping…' : 'Stop'}
         </button>
       )}
-      {canRestart && (
-        <button
-          type="button"
-          disabled={busyAction === 'restart'}
-          onClick={() => guard('restart', () => onRestart!(session))}
-          className="mt-2 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 transition-colors hover:border-cyan-500/60 hover:text-cyan-200 disabled:opacity-40"
-        >
-          {busyAction === 'restart' ? 'Starting…' : 'Start new session for this exe'}
-        </button>
+      {(canRestart || canPurge) && !isLive && (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {canRestart ? (
+            <button
+              type="button"
+              disabled={busyAction === 'restart'}
+              onClick={() => guard('restart', () => onRestart!(session))}
+              className="rounded-md border border-cyan-500/30 bg-cyan-500/5 px-2 py-1.5 text-xs font-medium text-cyan-200 transition-colors hover:border-cyan-500/60 hover:bg-cyan-500/15 disabled:opacity-40"
+              title="Start a new session against the same exe"
+            >
+              {busyAction === 'restart' ? 'Starting…' : 'Start again'}
+            </button>
+          ) : (
+            <span />
+          )}
+          {canPurge && (
+            <button
+              type="button"
+              disabled={busyAction === 'purge'}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                guard('purge', () => onPurge!(session.session_id));
+              }}
+              className={`flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 ${
+                canRestart ? '' : 'col-span-2'
+              } border-rose-500/40 bg-rose-500/5 text-rose-200 hover:border-rose-500/70 hover:bg-rose-500/15`}
+              title="Delete this session and all its events"
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M3 6h18" />
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                <path d="M19 6 17.5 20a2 2 0 0 1-2 1.8h-7a2 2 0 0 1-2-1.8L5 6" />
+              </svg>
+              {busyAction === 'purge' ? 'Deleting…' : 'Delete'}
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

@@ -1440,9 +1440,35 @@ class TrackerApp:
             anchor="w",
         )
         self.footer_label.pack(side=tk.LEFT, padx=20, pady=8)
+
+        # Visible credit + source link, centred so it can't be missed.
+        credit = ttk.Frame(footer, style="Toolbar.TFrame")
+        credit.pack(side=tk.LEFT, expand=True, pady=8)
+        ttk.Label(
+            credit, text="by ", style="Faint.TLabel",
+        ).pack(side=tk.LEFT)
+        link = ttk.Label(
+            credit, text="botnick", style="Header.TLabel",
+            cursor="hand2",
+        )
+        link.pack(side=tk.LEFT)
+        link.bind("<Button-1>", lambda _e: webbrowser.open(
+            "https://github.com/botnick/Program-Activity-Tracker"
+        ))
+        ttk.Label(
+            credit,
+            text="  ·  github.com/botnick/Program-Activity-Tracker",
+            style="Faint.TLabel",
+            cursor="hand2",
+        ).pack(side=tk.LEFT)
+        for w in credit.winfo_children():
+            w.bind("<Button-1>", lambda _e: webbrowser.open(
+                "https://github.com/botnick/Program-Activity-Tracker"
+            ))
+
         ttk.Label(
             footer,
-            text="F5  restart    Ctrl+F  search    Ctrl+L  clear    Ctrl+Q  quit",
+            text="F5 restart  ·  Ctrl+F search  ·  Ctrl+L clear  ·  Ctrl+Q quit",
             style="Faint.TLabel",
         ).pack(side=tk.RIGHT, padx=20, pady=8)
 
@@ -1459,6 +1485,9 @@ class TrackerApp:
         color, label = colors.get(state, ("#6e7681", state.title()))
         self.status_dot.itemconfigure(self._status_circle, fill=color)
         self.status_label.configure(text=label)
+        # Whenever status changes, also re-derive Start / Stop / Restart so
+        # the user can never click "Start" while the backend is up, etc.
+        self._refresh_button_states()
 
     def _refresh_admin_badge(self) -> None:
         if is_admin():
@@ -1641,7 +1670,10 @@ class TrackerApp:
             # Poll /api/health for readiness, then mark Running.
             threading.Thread(target=self._wait_until_ready, daemon=True).start()
         finally:
-            self.root.after(800, lambda: (self._busy.discard("start"), self._set_buttons_enabled(True)))
+            def _release() -> None:
+                self._busy.discard("start")
+                self._refresh_button_states()
+            self.root.after(800, _release)
 
     def _wait_until_ready(self) -> None:
         import urllib.request
@@ -1671,7 +1703,10 @@ class TrackerApp:
         if not self.backend.running:
             self._cleanup_orphans()
             self._set_status("stopped")
-            self.root.after(600, lambda: (self._busy.discard("stop"), self._set_buttons_enabled(True)))
+            def _release() -> None:
+                self._busy.discard("stop")
+                self._refresh_button_states()
+            self.root.after(600, _release)
             return
         self._set_status("stopping")
         threading.Thread(target=self._stop_worker, daemon=True).start()
@@ -1686,7 +1721,10 @@ class TrackerApp:
             self.root.after(0, lambda: self._set_status("stopped"))
             self.root.after(0, lambda: self._log_info("backend stopped."))
         finally:
-            self.root.after(0, lambda: (self._busy.discard("stop"), self._set_buttons_enabled(True)))
+            def _release() -> None:
+                self._busy.discard("stop")
+                self._refresh_button_states()
+            self.root.after(0, _release)
 
     def _cleanup_orphans(self) -> None:
         # Mirror stop.bat: kill orphan tracker_capture.exe + any leftover
@@ -1738,11 +1776,15 @@ class TrackerApp:
                 self._cleanup_orphans()
             self.root.after(0, self._on_start)
         finally:
-            self.root.after(0, lambda: self._busy.discard("restart"))
+            def _release() -> None:
+                self._busy.discard("restart")
+                self._refresh_button_states()
+            self.root.after(0, _release)
 
     def _set_buttons_enabled(self, enabled: bool) -> None:
-        """Disable / enable Start / Stop / Restart together so the user can't
-        spawn duplicate subprocesses by mashing buttons during a transition."""
+        """Bulk disable while a transition is in flight. After the transition,
+        callers should switch back to ``_refresh_button_states`` so each button
+        gets the right enablement based on actual backend state."""
         state = "normal" if enabled else "disabled"
         for btn in (
             getattr(self, "btn_start", None),
@@ -1752,6 +1794,30 @@ class TrackerApp:
             if btn is not None:
                 try:
                     btn.configure(state=state)
+                except tk.TclError:
+                    pass
+
+    def _refresh_button_states(self) -> None:
+        """Derive Start / Stop / Restart enablement from the live backend.
+
+        Rule: once the backend is up successfully, Start is disabled (you
+        can't start it twice). Stop and Restart are the only actions until
+        you Stop it. While the backend is down, only Start is offered.
+        While a transition is in flight (``self._busy`` non-empty), every
+        button is disabled — handled by the ``_set_buttons_enabled`` helper.
+        """
+        if self._busy:
+            return  # let the in-flight transition own the disabled state
+        running = self.backend.running
+        for name, want_enabled in (
+            ("btn_start",   not running),
+            ("btn_stop",    running),
+            ("btn_restart", running),
+        ):
+            btn = getattr(self, name, None)
+            if btn is not None:
+                try:
+                    btn.configure(state="normal" if want_enabled else "disabled")
                 except tk.TclError:
                     pass
 

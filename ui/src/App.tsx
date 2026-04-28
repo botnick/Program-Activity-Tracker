@@ -571,6 +571,34 @@ export function App() {
 
       {activeTab === 'mcp' && <McpHowToTab />}
 
+      <footer className="mt-6 border-t border-line bg-surface/60 py-4">
+        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 text-xs text-muted md:px-8">
+          <span>
+            Activity Tracker — open-source Windows process monitor.
+          </span>
+          <span className="flex items-center gap-2">
+            built by{' '}
+            <a
+              href="https://github.com/botnick"
+              target="_blank"
+              rel="noreferrer"
+              className="font-semibold text-ink underline-offset-2 hover:text-accent-hover hover:underline"
+            >
+              botnick
+            </a>
+            <span className="text-faint">·</span>
+            <a
+              href="https://github.com/botnick/Program-Activity-Tracker"
+              target="_blank"
+              rel="noreferrer"
+              className="hover:text-accent-hover"
+            >
+              github.com/botnick/Program-Activity-Tracker
+            </a>
+          </span>
+        </div>
+      </footer>
+
       <EventDetailDrawer event={selectedEvent} onClose={handleCloseDrawer} />
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
