@@ -461,7 +461,7 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-base text-ink">
-      <header className="sticky top-0 z-30 border-b border-line bg-surface/80 backdrop-blur-md">
+      <header className="sticky top-0 z-30 border-b border-line bg-surface/95 text-ink backdrop-blur-md">
         <div className="mx-auto max-w-[1600px] px-4 md:px-8">
           <div className="flex flex-wrap items-center justify-between gap-4 py-3 md:py-4">
             <div className="flex items-center gap-3">
@@ -474,7 +474,7 @@ export function App() {
                 </svg>
               </div>
               <div>
-                <h1 className="text-base font-semibold tracking-tight md:text-lg">Activity Tracker</h1>
+                <h1 className="text-base font-semibold tracking-tight text-ink md:text-lg">Activity Tracker</h1>
                 <p className="hidden text-[12px] text-muted sm:block">
                   Real-time Windows process activity — file · registry · process · network
                 </p>
