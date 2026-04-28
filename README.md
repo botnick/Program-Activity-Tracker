@@ -22,35 +22,51 @@ Real-time Windows process activity tracker. Pick any running process (e.g. `xdt.
 - **Realtime UI**: virtualized table, rAF-batched ingestion (smooth at 1000+ events/sec), drawer detail view, CSV/JSONL export, per-kind sparkline.
 - **Process picker with real Windows icons** for every running .exe.
 - **Five log streams** (`events`, `requests`, `errors`, `native`, `tracker`) viewable + tailable inside the UI.
-- **MCP server** (`activity-tracker-mcp`) so Claude Code / Claude Desktop can query, summarize, and export sessions via 14 tools, 6 resources, 4 prompts.
+- **MCP server** (`activity-tracker-mcp`) — 14 tools, 6 resources, 4 prompts over stdio. Works with any MCP-compatible client (Claude Code, Claude Desktop, Cursor, Continue, Cline, Windsurf, Goose, …). The web UI ships an "MCP How-To" tab with copy-paste config snippets per client.
 - **SQLite WAL persistence**: sessions and events survive backend restarts; 30-day automatic retention sweep.
 - **Native-only ETW backend**: no Python ETW fallback to drift; `pywintrace` removed in Phase 9.
 
 ## Two builds: release vs dev
 
-This repo ships in two flavours. **End users want the release zip.** **Contributors want the full source.**
+The repo ships in two flavours. **End users grab the release zip.** **Contributors clone the source.**
 
 | | Release zip (end user) | Dev / source (this repo) |
 |---|---|---|
-| What you need | only Python 3.10+ | Python 3.10+, Node 20+, Visual Studio 2022+ with C++ workload, CMake, Ninja |
-| Files in folder | `start.bat`, `stop.bat`, `requirements.txt`, `README.txt`, pre-built `tracker_capture.exe`, pre-built `ui/dist/`, Python source | full repo: C++ source, UI source, tests, bench, docs, CI, build scripts |
-| First-run time | ~30 seconds (pip only) | ~5 minutes (compiles native binary + builds UI) |
-| Use case | install on any Windows PC and just run | hacking on the code |
-| Where to get it | GitHub Releases (auto-built by `.github/workflows/release.yml`) | `git clone` |
+| What you need | nothing — just Win 10/11 + admin | Python 3.10+, Node 20+, Visual Studio 2022+ (C++), CMake, Ninja |
+| Entry point | `tracker.exe` (Tk GUI launcher) | `start.bat` |
+| Files in folder | `tracker.exe`, `python/` (bundled embedded interpreter + all deps), `backend/`, `service/native/build/tracker_capture.exe`, `ui/dist/`, `mcp/`, `.mcp.json`, `README.txt` | full source: C++, React TS, tests, bench, docs, CI |
+| Bundled Python? | yes | no — uses system Python |
+| First-run time | ~5 s (no pip, no compile) | ~5 min (compiles native binary + builds UI) |
+| Where to get it | [GitHub Releases](https://github.com/botnick/Program-Activity-Tracker/releases) (auto-built by `.github/workflows/release.yml`) | `git clone` |
 
-To produce a release zip locally from this repo:
+The release zip is **self-contained**: download → extract → run `tracker.exe`. No Python install on the user's machine, no internet on first run, no `.bat` files at all — `tracker.exe` is the only thing the user clicks.
+
+### Producing a release zip
+
+Locally (requires Python + Node + VS for the prerequisite builds):
 
 ```cmd
 pwsh -ExecutionPolicy Bypass -File scripts\build-release.ps1
-:: -> release\ActivityTracker-v0.2.0\  +  release\ActivityTracker-v0.2.0.zip
+:: → release\ActivityTracker-vX.Y.Z\  +  release\ActivityTracker-vX.Y.Z.zip
+:: (omits bundled Python and tracker.exe; for a full release, use the CI path below)
 ```
 
-To cut a public release on GitHub: push a `vX.Y.Z` tag, `release.yml` runs on `windows-latest`, builds everything, and attaches the zip to a GitHub Release.
+Public release on GitHub — push a `vX.Y.Z` tag and let CI do the heavy lifting:
 
 ```cmd
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
+
+`release.yml` on `windows-latest` then:
+1. Builds `tracker_capture.exe` (cmake + VS 2022).
+2. Builds `ui/dist/` (`npm ci` + `npm run build`).
+3. Downloads `python-3.12.7-embed-amd64.zip`, patches `python312._pth` so `..` is on sys.path, bootstraps pip, and installs the runtime requirements + the `mcp_tracker` package into the embedded interpreter.
+4. Runs PyInstaller against `launcher/launcher.spec` to produce `tracker.exe` (UAC-elevated, embedded `tracker.ico`, ~30 MB).
+5. Calls `scripts/build-release.ps1 -SkipBuild -PythonEmbedDir … -LauncherExe …` to assemble the folder + zip.
+6. Attaches the zip to a GitHub Release.
+
+The `.exe` is **never committed** to the repo — only `launcher/tracker_launcher.py` and `launcher/launcher.spec` are. CI builds the binary fresh on every tag.
 
 ## Quick start (Windows, dev / source)
 
@@ -110,9 +126,15 @@ python -m pip install -r requirements-lock.txt
 
 ```
 activity-tracker/
-├── start.bat / stop.bat / run-elevated.ps1   # one-click launchers
-├── bootstrap.ps1                             # full install + build
-├── scripts/setup-defender-exclusion.ps1      # one-time AV exclusion
+├── start.bat / stop.bat / run-elevated.ps1   # one-click dev launchers (NOT shipped in release zip)
+├── bootstrap.ps1                             # full install + build (dev)
+├── launcher/
+│   ├── tracker_launcher.py                   # Tk GUI replacement for start.bat / stop.bat
+│   └── launcher.spec                         # PyInstaller spec → tracker.exe (CI-built)
+├── scripts/
+│   ├── build-release.ps1                     # assemble release/<name>/ + .zip
+│   ├── release-template/                     # README.txt + requirements.txt for the release
+│   └── setup-defender-exclusion.ps1          # one-time AV exclusion
 ├── pyproject.toml / requirements-lock.txt    # Python deps
 │
 ├── backend/app/                              # FastAPI control plane
