@@ -72,19 +72,34 @@ jobs:
           Invoke-WebRequest $url -OutFile python-embed.zip
           Expand-Archive python-embed.zip -DestinationPath python-embed -Force
 
-          # Enable site-packages (uncomment 'import site' in pythonXX._pth).
+          # Patch pythonXX._pth so:
+          #   1. site.py runs (enables pip's site-packages)
+          #   2. the release-folder parent is on sys.path so `backend.*` and
+          #      `service.*` resolve when uvicorn imports them. Embeddable
+          #      Python ignores PYTHONPATH when this file exists, so we MUST
+          #      list parent dirs here. python.exe lives at release/python/,
+          #      so '..' = release/.
           $pth = Get-ChildItem python-embed -Filter 'python*._pth' | Select-Object -First 1
-          (Get-Content $pth.FullName) -replace '^#\s*import site', 'import site' | Set-Content $pth.FullName
+          $lines = Get-Content $pth.FullName | ForEach-Object {
+              if ($_ -match '^#\s*import site') { 'import site' } else { $_ }
+          }
+          if ($lines -notcontains '..') { $lines += '..' }
+          $lines | Set-Content $pth.FullName -Encoding ASCII
+          Write-Host "==> patched $($pth.Name):"
+          Get-Content $pth.FullName
 
           # Bootstrap pip into the embeddable distribution.
           Invoke-WebRequest 'https://bootstrap.pypa.io/get-pip.py' -OutFile get-pip.py
           ./python-embed/python.exe get-pip.py --no-warn-script-location
 
           # Install runtime deps + MCP package into the embeddable interpreter.
+          # NOTE: install MCP without -e (editable) — embeddable distros choke
+          # on .pth-based egg links. A regular install copies the package into
+          # site-packages, which is what we want for the release zip anyway.
           ./python-embed/python.exe -m pip install --no-warn-script-location -r scripts/release-template/requirements.txt
           ./python-embed/python.exe -m pip install --no-warn-script-location ./mcp
 
-          # Quick smoke check.
+          # Smoke check: every import the launcher needs at runtime.
           ./python-embed/python.exe -c "import fastapi, uvicorn, psutil, pydantic_settings, prometheus_client, mcp_tracker; print('embedded python OK')"
 
       # ---- 4. tracker.exe via PyInstaller --------------------------------

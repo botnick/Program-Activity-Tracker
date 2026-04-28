@@ -1495,19 +1495,38 @@ class TrackerApp:
         self.root.after(0, lambda: self._log_info("backend stopped."))
 
     def _cleanup_orphans(self) -> None:
-        # Kill orphan tracker_capture.exe + ETW sessions, same as stop.bat.
-        for cmd in (
-            ["taskkill", "/F", "/IM", "tracker_capture.exe"],
-            ["powershell", "-NoProfile", "-Command",
-             "Get-EtwTraceSession -Name 'ActivityTracker-*' "
-             "-ErrorAction SilentlyContinue | Stop-EtwTraceSession"],
-        ):
-            try:
-                subprocess.run(
-                    cmd, capture_output=True, creationflags=0x08000000, timeout=5
-                )
-            except Exception:
-                pass
+        # Mirror stop.bat: kill orphan tracker_capture.exe + any leftover
+        # ActivityTracker-* ETW sessions via logman (universally available
+        # on Windows 10 / 11; no PowerShell module dependency).
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "tracker_capture.exe"],
+                capture_output=True,
+                creationflags=0x08000000,
+                timeout=5,
+            )
+        except Exception:
+            pass
+        try:
+            r = subprocess.run(
+                ["logman", "query", "-ets"],
+                capture_output=True,
+                text=True,
+                creationflags=0x08000000,
+                timeout=5,
+            )
+            for line in (r.stdout or "").splitlines():
+                line = line.strip()
+                if line.startswith("ActivityTracker-"):
+                    name = line.split()[0]
+                    subprocess.run(
+                        ["logman", "stop", name, "-ets"],
+                        capture_output=True,
+                        creationflags=0x08000000,
+                        timeout=5,
+                    )
+        except Exception:
+            pass
 
     def _on_restart(self) -> None:
         threading.Thread(target=self._restart_worker, daemon=True).start()
