@@ -82,6 +82,7 @@ public:
         return last_event_filetime_.load(std::memory_order_relaxed);
     }
     size_t FileCacheSize() const;
+    size_t KeyCacheSize() const;
 
 private:
     static void WINAPI EventCallbackThunk(PEVENT_RECORD record);
@@ -90,6 +91,16 @@ private:
     void TouchFileObject(uint64_t file_object, std::wstring path);
     bool ResolveFileObject(uint64_t file_object, std::wstring& out) const;
     void ForgetFileObject(uint64_t file_object);
+
+    // KeyObject cache — the registry counterpart to the FileObject cache.
+    // Most ETW Microsoft-Windows-Kernel-Registry events carry a KeyObject
+    // (KCB) pointer plus the KeyName ONLY on kcb_create / open_key /
+    // create_key. Subsequent set_value / delete_value / kcb_rundown_end /
+    // kcb_delete events give us only the pointer, so we keep a bounded
+    // map and resolve at emit time. Same LRU + cap shape as the file cache.
+    void TouchKeyObject(uint64_t key_object, std::wstring name);
+    bool ResolveKeyObject(uint64_t key_object, std::wstring& out) const;
+    void ForgetKeyObject(uint64_t key_object);
 
     void StatsLoop();
     void EmitStatsSentinel();
@@ -109,6 +120,12 @@ private:
     std::list<uint64_t> file_lru_;  // front = MRU
     std::unordered_map<uint64_t, std::list<uint64_t>::iterator> file_lru_pos_;
     static constexpr size_t kFileCacheCap = 100'000;
+
+    mutable std::mutex key_cache_mu_;
+    std::unordered_map<uint64_t, std::wstring> key_paths_;
+    std::list<uint64_t> key_lru_;  // front = MRU
+    std::unordered_map<uint64_t, std::list<uint64_t>::iterator> key_lru_pos_;
+    static constexpr size_t kKeyCacheCap = 100'000;
 
     // Heartbeat / stats thread. Woken via stats_cv_ on shutdown so we don't
     // block up to stats_interval_ms during clean stop.

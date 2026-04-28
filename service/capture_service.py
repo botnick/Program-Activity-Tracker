@@ -97,6 +97,7 @@ class CaptureService:
         self._latest_stats: dict[str, Any] = {
             "tracked_pids": 1,           # at least the target pid until first heartbeat
             "file_object_cache_size": 0,
+            "key_object_cache_size": 0,
             "errors": 0,
             "last_event_at": None,
         }
@@ -280,6 +281,7 @@ class CaptureService:
                         for k in (
                             "tracked_pids",
                             "file_object_cache_size",
+                            "key_object_cache_size",
                             "errors",
                             "last_event_at",
                         ):

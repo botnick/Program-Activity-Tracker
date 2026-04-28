@@ -305,6 +305,8 @@ void EventConsumer::EmitStatsSentinel() {
                      JsonValue(static_cast<long long>(pids_.Size())));
     obj.emplace_back("file_object_cache_size",
                      JsonValue(static_cast<long long>(FileCacheSize())));
+    obj.emplace_back("key_object_cache_size",
+                     JsonValue(static_cast<long long>(KeyCacheSize())));
     obj.emplace_back("errors",
                      JsonValue(static_cast<long long>(Errors())));
     obj.emplace_back("last_event_at",
@@ -394,6 +396,27 @@ void EventConsumer::HandleEvent(PEVENT_RECORD record) {
         }
     }
 
+    // Key-object (KCB) cache maintenance — registry counterpart.
+    // Touch on any registry event that carries a non-empty KeyName/RelativeName/
+    // BaseName so the inevitable downstream events on the same KCB (kcb_delete,
+    // kcb_rundown_end, set_value, query_value...) can resolve back to a path.
+    if (kind_w == L"registry") {
+        unsigned long long key_object = 0;
+        if (!GetUInt(ev, L"KeyObject", key_object)) {
+            GetUInt(ev, L"KeyHandle", key_object);
+        }
+        const std::wstring* kname = GetString(ev, L"KeyName");
+        if (!kname || kname->empty()) kname = GetString(ev, L"RelativeName");
+        if (!kname || kname->empty()) kname = GetString(ev, L"BaseName");
+        if (key_object != 0 && kname && !kname->empty()) {
+            TouchKeyObject(key_object, *kname);
+        }
+        // Forget on KCB removal (id 11 = kcb_delete) and explicit close (22).
+        if ((ev.event_id == 11 || ev.event_id == 22) && key_object != 0) {
+            ForgetKeyObject(key_object);
+        }
+    }
+
     // Build the JSON payload.
     JsonObject root;
     root.emplace_back("id", JsonValue(MakeUuid()));
@@ -440,14 +463,36 @@ void EventConsumer::HandleEvent(PEVENT_RECORD record) {
                                         ev, {L"FileName", L"OpenPath",
                                              L"FilePath"})));
     } else if (kind_w == L"registry") {
+        std::wstring key_str;
         const std::wstring* key = GetString(ev, L"KeyName");
-        if (!key) key = GetString(ev, L"RelativeName");
-        if (!key) key = GetString(ev, L"BaseName");
+        if (!key || key->empty()) key = GetString(ev, L"RelativeName");
+        if (!key || key->empty()) key = GetString(ev, L"BaseName");
+        if (key && !key->empty()) key_str = *key;
+
+        // Cache lookup when ETW didn't ship a name on this event.
+        unsigned long long ko = 0;
+        if (key_str.empty()) {
+            if (!GetUInt(ev, L"KeyObject", ko)) GetUInt(ev, L"KeyHandle", ko);
+            if (ko != 0) ResolveKeyObject(ko, key_str);
+        }
+        // Last-resort fallback so the user can correlate events on the same
+        // KCB even when it was created before tracking started.
+        if (key_str.empty()) {
+            if (ko == 0) {
+                if (!GetUInt(ev, L"KeyObject", ko)) GetUInt(ev, L"KeyHandle", ko);
+            }
+            if (ko != 0) {
+                wchar_t buf[40];
+                std::swprintf(buf, sizeof(buf) / sizeof(buf[0]),
+                              L"[kcb 0x%llx]", ko);
+                key_str = buf;
+            }
+        }
         root.emplace_back("ppid", JsonValue());
         root.emplace_back("path", JsonValue());
         root.emplace_back("target",
-                          (key && !key->empty()) ? JsonValue(WideToUtf8(*key))
-                                                  : JsonValue());
+                          key_str.empty() ? JsonValue()
+                                          : JsonValue(WideToUtf8(key_str)));
         root.emplace_back("details", JsonValue(DecodeDetails(ev, {})));
     } else if (kind_w == L"process") {
         unsigned long long ppid_u = 0;
@@ -576,6 +621,63 @@ void EventConsumer::ForgetFileObject(uint64_t file_object) {
         file_lru_pos_.erase(pos_it);
     }
     file_paths_.erase(file_object);
+}
+
+// ---- KeyObject cache (registry KCB pointer -> resolved KeyName) ----------
+size_t EventConsumer::KeyCacheSize() const {
+    std::lock_guard<std::mutex> lock(key_cache_mu_);
+    return key_paths_.size();
+}
+
+void EventConsumer::TouchKeyObject(uint64_t key_object, std::wstring name) {
+    if (key_object == 0 || name.empty()) return;
+    std::lock_guard<std::mutex> lock(key_cache_mu_);
+    auto it = key_lru_pos_.find(key_object);
+    if (it != key_lru_pos_.end()) {
+        key_lru_.erase(it->second);
+    }
+    key_lru_.push_front(key_object);
+    key_lru_pos_[key_object] = key_lru_.begin();
+    key_paths_[key_object] = std::move(name);
+    while (key_lru_.size() > kKeyCacheCap) {
+        uint64_t evict = key_lru_.back();
+        key_lru_.pop_back();
+        key_lru_pos_.erase(evict);
+        key_paths_.erase(evict);
+    }
+}
+
+bool EventConsumer::ResolveKeyObject(uint64_t key_object,
+                                     std::wstring& out) const {
+    if (key_object == 0) return false;
+    std::lock_guard<std::mutex> lock(key_cache_mu_);
+    auto it = key_paths_.find(key_object);
+    if (it == key_paths_.end()) return false;
+    out = it->second;
+    auto pos_it = key_lru_pos_.find(key_object);
+    if (pos_it != key_lru_pos_.end()) {
+        // const_cast for LRU bookkeeping — logically const externally.
+        auto& lru = const_cast<std::list<uint64_t>&>(key_lru_);
+        auto& positions =
+            const_cast<std::unordered_map<uint64_t,
+                                          std::list<uint64_t>::iterator>&>(
+                key_lru_pos_);
+        lru.erase(pos_it->second);
+        lru.push_front(key_object);
+        positions[key_object] = lru.begin();
+    }
+    return true;
+}
+
+void EventConsumer::ForgetKeyObject(uint64_t key_object) {
+    if (key_object == 0) return;
+    std::lock_guard<std::mutex> lock(key_cache_mu_);
+    auto pos_it = key_lru_pos_.find(key_object);
+    if (pos_it != key_lru_pos_.end()) {
+        key_lru_.erase(pos_it->second);
+        key_lru_pos_.erase(pos_it);
+    }
+    key_paths_.erase(key_object);
 }
 
 }  // namespace tracker

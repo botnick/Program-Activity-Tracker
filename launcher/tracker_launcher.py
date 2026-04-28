@@ -687,6 +687,7 @@ class CaptureMetricsPoller:
             "events_per_sec": None,
             "tracked_pids": 0,
             "file_object_cache_size": 0,
+            "key_object_cache_size": 0,
             "errors": 0,
             "dropped": 0,
             "session_name": "",
@@ -738,6 +739,7 @@ class CaptureMetricsPoller:
             for s in health.get("captures", []) or []:
                 m["tracked_pids"] += int(s.get("tracked_pids") or 0)
                 m["file_object_cache_size"] += int(s.get("file_object_cache_size") or 0)
+                m["key_object_cache_size"] += int(s.get("key_object_cache_size") or 0)
                 m["errors"] += int(s.get("errors") or 0)
                 m["dropped"] += int(s.get("dropped") or 0)
                 if not m["session_name"]:
@@ -985,11 +987,11 @@ class CaptureMonitor(ttk.Frame):
             ("events/sec",   "#79c0ff"),
             ("total events", "#79c0ff"),
             ("tracked pids", "#7ee787"),
-            ("cache size",   "#d2a8ff"),
+            ("file cache",   "#79c0ff"),
+            ("key cache",    "#d2a8ff"),
             ("cpu %",        "#f1e05a"),
             ("ram (mb)",     "#d2a8ff"),
             ("threads",      "#8b949e"),
-            ("handles",      "#8b949e"),
         ]
         self._kpis: dict[str, KpiCard] = {}
         for i, (name, accent) in enumerate(cards):
@@ -1071,11 +1073,11 @@ class CaptureMonitor(ttk.Frame):
         tot = m.get("events_total")
         self._kpis["total events"].set_value(f"{tot:,}" if tot is not None else "—")
         self._kpis["tracked pids"].set_value(f"{m['tracked_pids']:,}")
-        self._kpis["cache size"].set_value(f"{m['file_object_cache_size']:,}")
+        self._kpis["file cache"].set_value(f"{m['file_object_cache_size']:,}")
+        self._kpis["key cache"].set_value(f"{m['key_object_cache_size']:,}")
         self._kpis["cpu %"].set_value(f"{m['native_cpu']:.1f}%")
         self._kpis["ram (mb)"].set_value(f"{m['native_rss_mb']:.1f}")
         self._kpis["threads"].set_value(f"{m['native_threads']}")
-        self._kpis["handles"].set_value(f"{m['native_handles']}")
 
         if eps is not None:
             self._spark_events.push(eps)
